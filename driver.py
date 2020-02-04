@@ -1,10 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from stylecorrection.loaders.corpus import CorpusLoader, PretrainingDataset, DirectNoiseDataset
+from stylecorrection.loaders.corpus import CorpusLoader, PretrainingDataset, DirectNoiseDataset, H5CorpusLoader
 from stylecorrection.models.transformer import TransformerS2S
 
-bl = CorpusLoader(lambda x: x.strip().split(' '), topk=4000, vocab_topk=30000)
+H5CorpusLoader.create_from_compressed('temp/datasets/BookCorpus_unique.h5', 'temp/datasets/BookCorpus_unique.tar.gz', lambda x: x.strip().split(' '))
+exit()
+
+bl = CorpusLoader(lambda x: x.strip().split(' '), 1, 30000)
 bl.extract_from_archive('temp/datasets/BookCorpus_unique.tar.gz')
 pds = PretrainingDataset(bl)
 

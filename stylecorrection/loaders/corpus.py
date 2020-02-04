@@ -1,10 +1,70 @@
 import tarfile
 import io
+import h5py
 import torch
 import numpy as np
 import itertools as it
 from collections import Counter
 from typing import Callable, List, Tuple
+
+
+class H5CorpusLoader(object):
+
+    @classmethod
+    def __process_lines(cls,
+                        raw_lines: List[str],
+                        tokenize: Callable[[str], List[str]],
+                        preprocess: Callable[[str], str]) -> List[List[str]]:
+        tok_pre_sentences = []
+        for line in raw_lines:
+            if preprocess:
+                pre_sentence = preprocess(line.strip())
+            else:
+                pre_sentence = line.strip()
+            tokenized = tokenize(pre_sentence)
+            tok_pre_sentences.append(tokenized)
+        return tok_pre_sentences
+
+    @classmethod
+    def create_from_compressed(cls,
+                               h5_fn: str,
+                               corpus_tar_gz: str,
+                               tokenize: Callable[[str], List[str]],
+                               preprocess: Callable[[str], str] = None):
+        with tarfile.open(corpus_tar_gz, 'r:gz') as tar_file:
+            books = tar_file.getmembers()[:1000]
+            print('Counting...', end='')
+            word_count = 0
+            line_count = 0
+            for i, b in enumerate(books):
+                reader = io.TextIOWrapper(tar_file.extractfile(b))
+                raw_text = reader.read(None).splitlines()
+                processed_lines = cls.__process_lines(raw_text, tokenize, preprocess)
+                for l in processed_lines:
+                    word_count += len(l)
+                    line_count += 1
+            print('DONE')
+            print(word_count)
+            print(line_count)
+
+            dt = h5py.string_dtype(encoding='utf-8')
+            with h5py.File(h5_fn, 'w') as h5_file:
+            i    ds = h5_file.create_dataset('tokenized', (word_count,), dtype=dt, compression='lzf')
+                index_ds = h5_file.create_dataset('sentences_starts', (line_count,), dtype='u1')
+                len_ds = h5_file.create_dataset('sentences_len', (line_count,), dtype='u1')
+                position = 0
+                line = 0
+                for i, b in enumerate(books):
+                    print('{:.2%}'.format(float(position)/word_count))
+                    reader = io.TextIOWrapper(tar_file.extractfile(b))
+                    raw_text = reader.read(None).splitlines()
+                    processed_lines = cls.__process_lines(raw_text, tokenize, preprocess)
+                    for l in processed_lines:
+                        ds[position:position+len(l)] = l
+                        index_ds[line] = position
+                        len_ds[line] = len(l)
+                        position += len(l)
+
 
 
 class CorpusLoader(object):
@@ -113,6 +173,11 @@ class CorpusLoader(object):
                 converted.extend([self.wtoi[w] if w in vocab_set else self.wtoi[self.unk_token] for w in s])
                 converted.extend([self.wtoi[self.eos_token]])
                 self.data[which].append(torch.tensor(converted, dtype=torch.long))
+            # for s in sentences[which]:
+            #     converted = [self.wtoi[self.bos_token]]
+            #     converted.extend([self.wtoi[w] if w in vocab_set else self.wtoi[self.unk_token] for w in s])
+            #     converted.extend([self.wtoi[self.eos_token]])
+            #     self.data[which].append(torch.tensor(converted, dtype=torch.long))
 
         print('Converting train data...', end='')
         fill_data('train')
