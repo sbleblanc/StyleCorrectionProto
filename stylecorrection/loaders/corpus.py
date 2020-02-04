@@ -7,7 +7,7 @@ from collections import Counter
 from typing import Callable, List, Tuple
 
 
-class BookCorpusLoader(object):
+class CorpusLoader(object):
 
     def __init__(self,
                  tokenize: Callable[[str], List[str]],
@@ -44,6 +44,14 @@ class BookCorpusLoader(object):
 
         self.data = {'train': [], 'valid': []}
         self.unigram_probs = None
+
+    @property
+    def mask_idx(self):
+        return self.wtoi[self.mask_token]
+
+    @property
+    def pad_idx(self):
+        return self.wtoi[self.pad_token]
 
     def __process_lines(self, raw_lines: List[str]) -> List[List[str]]:
         tok_pre_sentences = []
@@ -139,11 +147,24 @@ class BookCorpusLoader(object):
                 longest = 0
                 batch.clear()
 
+    def decode_tensor(self, t: torch.Tensor) -> List[str]:
+        if t.dim() == 1:
+            t = t.unsqueeze(0)
+
+        decoded_sent = []
+
+        for i in range(t.shape[0]):
+            sent = [self.vocab[w.item()] for w in t[i] if self.vocab[w.item()] != self.pad_idx]
+            decoded_sent.append(' '.join(sent))
+
+        return decoded_sent
+
+
 
 class PretrainingDataset(object):
 
     def __init__(self,
-                 src_ds: BookCorpusLoader,
+                 src_ds: CorpusLoader,
                  masking_prob: float = 0.8,
                  random_prob: float = 0.1,
                  keeping_prob: float = 0.1,
@@ -160,12 +181,14 @@ class PretrainingDataset(object):
         for batch, lengths in self.src_ds(bs=bs, which=which):
             noised_batch = batch.clone()
             clean_segments = []
+            offsets_starts = []
             longest = 0
             for bi in range(batch.shape[0]):
                 mask_len = (lengths[bi] - 2) // 2
                 if mask_len > longest:
                     longest = mask_len
                 mask_start = torch.randint(1, mask_len + 1, [1]).item()
+                offsets_starts.append(mask_start)
                 clean_segments.append(batch[bi, mask_start:mask_start+mask_len])
                 actions = self.noising_probs.multinomial(mask_len, replacement=True)
                 for ai, si in enumerate(range(mask_start, mask_start+mask_len)):
@@ -175,11 +198,67 @@ class PretrainingDataset(object):
                         noised_batch[bi, si] = self.src_ds.unigram_probs.multinomial(1).item()
 
             segments = torch.empty([batch.shape[0], longest], dtype=torch.long).fill_(self.src_ds.wtoi[self.src_ds.pad_token]).to(self.device)
-            shifted_segments = torch.empty_like(segments).fill_(self.src_ds.wtoi[self.src_ds.mask_token])
+            shifted_segments = torch.empty_like(segments).fill_(self.src_ds.wtoi[self.src_ds.mask_token]).to(self.device)
+            input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
+            output_key_mask = torch.zeros_like(segments).bool().to(self.device)
+            offsets = torch.zeros([batch.shape[0], longest], dtype=torch.long).to(self.device)
             for bi, seg in enumerate(clean_segments):
                 segments[bi, :len(seg)] = seg
                 shifted_segments[bi, 1:len(seg)] = seg[:-1]
+                offsets[bi, :len(seg)] = torch.arange(offsets_starts[bi], offsets_starts[bi] + len(seg))
+                input_key_mask[bi, lengths[bi]:] = True
+                output_key_mask[bi, len(seg):] = True
 
-            yield noised_batch, segments, shifted_segments
+            yield noised_batch, input_key_mask, segments, shifted_segments, output_key_mask, offsets
 
 
+class DirectNoiseDataset(object):
+
+    def __init__(self,
+                 src_ds: CorpusLoader,
+                 mask_prob: float = 0.5,
+                 del_prob: float = 0.15,
+                 ins_prob: float = 0.15,
+                 keep_prob: float = 0.2,
+                 device: str = "cpu"):
+        self.src_ds = src_ds
+        self.action_probs = torch.tensor([mask_prob, del_prob, ins_prob, keep_prob]).to(device)
+        assert self.action_probs.sum().allclose(torch.tensor(1.))
+        self.device = device
+
+    def __call__(self,
+                 bs: int = 32,
+                 which: str = "train"):
+
+        for batch, lengths in self.src_ds(bs=bs, which=which):
+            noised_examples = []
+            longest = 0
+            for bi, example in enumerate(batch):
+                current_noised_example = []
+                actions = self.action_probs.multinomial(lengths[bi] - 2, replacement=True)
+                current_noised_example.append(example[0])
+                for ei, a in enumerate(actions):
+                    if a == 0: #mask
+                        current_noised_example.append(self.src_ds.mask_idx)
+                    elif a == 1: #del
+                        continue
+                    elif a == 2: #insert
+                        current_noised_example.append(example[ei+1])
+                        sampled_word = self.src_ds.unigram_probs.multinomial(1).item()
+                        current_noised_example.append(sampled_word)
+                    elif a == 3: #keep
+                        current_noised_example.append(example[ei+1])
+                current_noised_example.append(example[lengths[bi]-1])
+                if len(current_noised_example) > longest:
+                    longest = len(current_noised_example)
+                noised_examples.append(torch.tensor(current_noised_example, dtype=torch.long))
+
+            noised_batch = torch.empty([batch.shape[0], longest]).fill_(self.src_ds.pad_idx).to(self.device)
+            output_key_mask = torch.zeros_like(batch).bool().to(self.device)
+            input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
+            for bi, ne in enumerate(noised_examples):
+                noised_batch[bi, :ne.shape[0]] = ne
+                output_key_mask[bi, lengths[bi]:] = True
+                input_key_mask[bi, ne.shape[0]:] = True
+
+            yield noised_batch, input_key_mask, batch, output_key_mask
