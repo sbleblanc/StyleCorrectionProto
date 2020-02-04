@@ -4,7 +4,7 @@ import torch.optim as optim
 from stylecorrection.loaders.corpus import CorpusLoader, PretrainingDataset, DirectNoiseDataset
 from stylecorrection.models.transformer import TransformerS2S
 
-bl = CorpusLoader(lambda x: x.strip().split(' '), 2000, 30000)
+bl = CorpusLoader(lambda x: x.strip().split(' '), topk=4000, vocab_topk=30000)
 bl.extract_from_archive('temp/datasets/BookCorpus_unique.tar.gz')
 pds = PretrainingDataset(bl)
 

@@ -61,7 +61,7 @@ class CorpusLoader(object):
             else:
                 pre_sentence = line.strip()
             tokenized = self.tokenize(pre_sentence)
-            if len(tokenized) <= self.max_len:
+            if len(tokenized) <= self.max_len and len(tokenized) > 1:
                 tok_pre_sentences.append(self.tokenize(pre_sentence))
         return tok_pre_sentences
 
@@ -87,6 +87,7 @@ class CorpusLoader(object):
         valid_selector[np.random.randint(0, len(processed_book_sentences), num_valid_sentences)] = 1
         sentences['valid'] = list(it.compress(processed_book_sentences, valid_selector))
         sentences['train'] = list(it.compress(processed_book_sentences, 1-valid_selector))
+        processed_book_sentences = None
 
         vocab_count = Counter(it.chain(*sentences['train']))
         if self.vocab_topk == 0:
@@ -106,14 +107,19 @@ class CorpusLoader(object):
         vocab_set = set(self.vocab)
 
         def fill_data(which):
-            for s in sentences[which]:
+            while len(sentences[which]) > 0:
+                s = sentences[which].pop(-1)
                 converted = [self.wtoi[self.bos_token]]
                 converted.extend([self.wtoi[w] if w in vocab_set else self.wtoi[self.unk_token] for w in s])
                 converted.extend([self.wtoi[self.eos_token]])
                 self.data[which].append(torch.tensor(converted, dtype=torch.long))
 
+        print('Converting train data...', end='')
         fill_data('train')
+        print('DONE')
+        print('Converting validation data...', end='')
         fill_data('valid')
+        print('DONE')
 
     def extract_from_text(self, corpus_fn: str) -> Tuple[List[List[str]], List[List[str]]]:
         raw_lines = []
@@ -138,7 +144,7 @@ class CorpusLoader(object):
                 longest = len(example)
             batch.append(example)
             if (data_counter + 1) % bs == 0 or (data_counter + 1) == len(self.data[which]):
-                combined_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.wtoi[self.pad_token])
+                combined_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.wtoi[self.pad_token]).to(self.device)
                 example_lengths = torch.zeros([len(batch)], dtype=torch.long)
                 for bi, ex in enumerate(batch):
                     example_lengths[bi] = len(ex)
