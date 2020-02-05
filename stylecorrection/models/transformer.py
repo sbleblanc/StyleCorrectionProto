@@ -49,5 +49,5 @@ class TransformerS2S(nn.Module):
         in_embedded = self.pe(self.emb(enc_input))
         encoded = self.enc(in_embedded.transpose(1, 0), src_key_padding_mask=input_key_mask)
         out_embedded = self.pe(self.emb(dec_input), out_offsets)
-        decoded = self.dec(out_embedded.transpose(1, 0), encoded, torch.ones(dec_input.shape[1], dec_input.shape[1]).tril(), tgt_key_padding_mask=output_key_mask, memory_key_padding_mask=input_key_mask)
+        decoded = self.dec(out_embedded.transpose(1, 0), encoded, torch.ones(dec_input.shape[1], dec_input.shape[1]).tril().to(self.device), tgt_key_padding_mask=output_key_mask, memory_key_padding_mask=input_key_mask)
         return self.lin(decoded).transpose(1, 0)
