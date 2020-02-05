@@ -7,7 +7,7 @@ from stylecorrection.models.transformer import TransformerS2S
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 cl = H5CorpusLoader.load_and_split('temp/datasets/BookCorpus_unique.h5', device=device)
-pds = PretrainingDataset(cl)
+pds = PretrainingDataset(cl, device=device)
 
 model = TransformerS2S(len(cl.vocab), 24, device=device).to(device)
 optimizer = optim.Adam(model.parameters())

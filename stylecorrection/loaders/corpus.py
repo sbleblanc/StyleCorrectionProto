@@ -45,7 +45,7 @@ class H5CorpusLoader(object):
                  cls.eos_token]
         wtoi = dict([(w, i) for i, w in enumerate(vocab)])
         with tarfile.open(corpus_tar_gz, 'r:gz') as tar_file:
-            books = tar_file.getmembers()[:10]
+            books = tar_file.getmembers()
             print('Counting...', end='')
             word_count = 0
             sent_count = 0
