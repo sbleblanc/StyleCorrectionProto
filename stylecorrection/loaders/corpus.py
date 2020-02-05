@@ -5,10 +5,16 @@ import torch
 import numpy as np
 import itertools as it
 from collections import Counter
-from typing import Callable, List, Tuple
+from typing import Callable, List, Tuple, Dict
 
 
 class H5CorpusLoader(object):
+
+    unk_token = "<unk>"
+    mask_token = "<mask>"
+    pad_token = "<pad>"
+    bos_token = "<bos>"
+    eos_token = "<eos>"
 
     @classmethod
     def __process_lines(cls,
@@ -32,20 +38,14 @@ class H5CorpusLoader(object):
                                tokenize: Callable[[str], List[str]],
                                preprocess: Callable[[str], str] = None,
                                max_len: int = 175):
-        unk_token = "<unk>"
-        mask_token = "<mask>"
-        pad_token = "<pad>"
-        bos_token = "<bos>"
-        eos_token = "<eos>"
-
-        vocab = [mask_token,
-                 pad_token,
-                 unk_token,
-                 bos_token,
-                 eos_token]
+        vocab = [cls.mask_token,
+                 cls.pad_token,
+                 cls.unk_token,
+                 cls.bos_token,
+                 cls.eos_token]
         wtoi = dict([(w, i) for i, w in enumerate(vocab)])
         with tarfile.open(corpus_tar_gz, 'r:gz') as tar_file:
-            books = tar_file.getmembers()
+            books = tar_file.getmembers()[:10]
             print('Counting...', end='')
             word_count = 0
             sent_count = 0
@@ -87,6 +87,118 @@ class H5CorpusLoader(object):
                         position += len(l)
                         line += 1
 
+
+    @classmethod
+    def load_and_split(cls,
+                       h5_fn: str,
+                       valid_ratio: float = 0.2,
+                       vocab_topk: int = 0,
+                       min_freq: int = 2,
+                       device: str = "cpu"):
+        with h5py.File(h5_fn, 'r') as h5_file:
+            corpus = h5_file['corpus'][:]
+            sentences = h5_file['sentences'][:, :]
+            global_vocab = h5_file['vocab'][:]
+            valid_selector = np.zeros(sentences.shape[0])
+            num_valid_sentences = int(sentences.shape[0] * valid_ratio)
+            valid_selector[np.random.randint(0, sentences.shape[0], num_valid_sentences)] = 1
+            splits = dict()
+            splits['valid'] = torch.from_numpy(np.stack(list(it.compress(sentences, valid_selector)), axis=0).astype(np.int))
+            splits['train'] = torch.from_numpy(np.stack(list(it.compress(sentences, 1-valid_selector)), axis=0).astype(np.int))
+
+            vocab_counter = Counter()
+            for i in range(splits['train'].shape[0]):
+                start, end = splits['train'][i]
+                vocab_counter.update(corpus[start:end])
+
+            temp_vocab = list(global_vocab[:5])
+            if vocab_topk == 0:
+                n = len(vocab_counter)
+            else:
+                n = vocab_topk
+            temp_vocab.extend([global_vocab[wi] for wi, _ in it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n))])
+            wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
+            gtr_mapping = dict([(wi, i+5) for i, (wi, _) in enumerate(it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n)))])
+            rtg_mapping = dict([(i + 5, wi) for i, (wi, _) in enumerate(it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n)))])
+            for i in range(corpus.shape[0]):
+                if corpus[i] in gtr_mapping:
+                    corpus[i] = gtr_mapping[corpus[i]]
+                else:
+                    corpus[i] = wtoi[cls.unk_token]
+
+            unigram_probs = torch.zeros(len(temp_vocab))
+            for i in range(5, len(temp_vocab)):
+                unigram_probs[i] = vocab_counter[rtg_mapping[i]]
+            unigram_probs /= sum([c for _, c in vocab_counter.items()])
+            unigram_probs[wtoi[cls.unk_token]] = 1. - unigram_probs.sum().item()
+
+            return cls(torch.from_numpy(corpus.astype(np.int)),
+                       splits,
+                       temp_vocab,
+                       wtoi,
+                       unigram_probs,
+                       device)
+
+    def __init__(self,
+                 corpus: torch.Tensor,
+                 sentences: Dict[str, torch.Tensor],
+                 vocab: List[str],
+                 wtoi: Dict[str, int],
+                 unigram_probs: torch.Tensor,
+                 device: str = "cpu"):
+        self.corpus = corpus
+        self.sentences = sentences
+        self.vocab = vocab
+        self.wtoi = wtoi
+        self.unigram_probs = unigram_probs
+        self.device = device
+
+    def __call__(self,
+                 bs: int = 32,
+                 which: str = 'train'):
+
+        batch = []
+        longest = 0
+        for data_counter, data_index in enumerate(torch.randperm(self.sentences[which].shape[0])):
+            s_start, s_end = self.sentences[which][data_index]
+            ex_len = s_end - s_start
+            example = torch.zeros(ex_len + 2)
+            example[0] = self.wtoi[self.bos_token]
+            example[-1] = self.wtoi[self.eos_token]
+            example[1:-1] = self.corpus[s_start:s_end]
+            if len(example) > longest:
+                longest = len(example)
+            batch.append(example)
+            if (data_counter + 1) % bs == 0 or (data_counter + 1) == self.sentences[which].shape[0]:
+                combined_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(
+                    self.wtoi[self.pad_token]).to(self.device)
+                example_lengths = torch.zeros([len(batch)], dtype=torch.long)
+                for bi, ex in enumerate(batch):
+                    example_lengths[bi] = len(ex)
+                    combined_batch[bi, :len(ex)] = ex
+                yield combined_batch, example_lengths
+                longest = 0
+                batch.clear()
+
+    @property
+    def mask_idx(self):
+        return self.wtoi[self.mask_token]
+
+    @property
+    def pad_idx(self):
+        return self.wtoi[self.pad_token]
+
+    def decode_tensor(self, t: torch.Tensor) -> List[str]:
+        if t.dim() == 1:
+            t = t.unsqueeze(0)
+
+        decoded_sent = []
+
+        for i in range(t.shape[0]):
+            sent = [self.vocab[w.item()] for w in t[i] if self.vocab[w.item()] != self.pad_idx]
+            decoded_sent.append(' '.join(sent))
+
+        return decoded_sent
 
 class CorpusLoader(object):
 
@@ -256,7 +368,7 @@ class CorpusLoader(object):
 class PretrainingDataset(object):
 
     def __init__(self,
-                 src_ds: CorpusLoader,
+                 src_ds: H5CorpusLoader,
                  masking_prob: float = 0.8,
                  random_prob: float = 0.1,
                  keeping_prob: float = 0.1,
@@ -279,7 +391,11 @@ class PretrainingDataset(object):
                 mask_len = (lengths[bi] - 2) // 2
                 if mask_len > longest:
                     longest = mask_len
-                mask_start = torch.randint(1, mask_len + 1, [1]).item()
+                if mask_len > 0:
+                    mask_start = torch.randint(1, mask_len + 1, [1]).item()
+                else:
+                    mask_start = 1
+                    mask_len = 1
                 offsets_starts.append(mask_start)
                 clean_segments.append(batch[bi, mask_start:mask_start+mask_len])
                 actions = self.noising_probs.multinomial(mask_len, replacement=True)
