@@ -30,7 +30,8 @@ class H5CorpusLoader(object):
                                h5_fn: str,
                                corpus_tar_gz: str,
                                tokenize: Callable[[str], List[str]],
-                               preprocess: Callable[[str], str] = None):
+                               preprocess: Callable[[str], str] = None,
+                               max_len: int = 175):
         unk_token = "<unk>"
         mask_token = "<mask>"
         pad_token = "<pad>"
@@ -43,48 +44,48 @@ class H5CorpusLoader(object):
                  bos_token,
                  eos_token]
         wtoi = dict([(w, i) for i, w in enumerate(vocab)])
-        vocab_counter = Counter()
         with tarfile.open(corpus_tar_gz, 'r:gz') as tar_file:
             books = tar_file.getmembers()[:100]
             print('Counting...', end='')
-            line_count = 0
-            longest = 0
+            word_count = 0
+            sent_count = 0
             for i, b in enumerate(books):
                 reader = io.TextIOWrapper(tar_file.extractfile(b))
                 raw_text = reader.read(None).splitlines()
                 processed_lines = cls.__process_lines(raw_text, tokenize, preprocess)
                 for l in processed_lines:
+                    if len(l) > max_len:
+                        continue
                     for w in l:
                         if w not in wtoi:
                             wtoi[w] = len(vocab)
                             vocab.append(w)
-                    if len(l) > longest:
-                        longest = len(l)
-                    vocab_counter.update(l)
-                    line_count += 1
+                    word_count += len(l)
+                    sent_count += 1
             print('DONE')
 
             dt = h5py.string_dtype(encoding='utf-8')
             with h5py.File(h5_fn, 'w') as h5_file:
-                corpus_ds = h5_file.create_dataset('corpus', (line_count, longest), dtype='u4', compression='gzip', compression_opts=9)
-                vocab_ds = h5_file.create_dataset('vocab', (len(vocab),), dtype=dt, compression='gzip', compression_opts=9)
-                counts_ds = h5_file.create_dataset('vocab_counts', (len(vocab),), dtype=dt, compression='gzip', compression_opts=9)
-                for i, w in enumerate(vocab):
-                    vocab_ds[i] = w
-                    counts_ds[i] = vocab_counter[w]
+                corpus_ds = h5_file.create_dataset('corpus', (word_count, ), dtype='u4')
+                start_len_ds = h5_file.create_dataset('sentences', (sent_count, 2), dtype='u4')
+                vocab_ds = h5_file.create_dataset('vocab', (len(vocab),), dtype=dt)
+                vocab_ds[:] = vocab
 
+                position = 0
                 line = 0
                 for i, b in enumerate(books):
-                    print('{:.2%}'.format(float(line)/line_count))
+                    print('{:.2%}'.format(float(line)/sent_count))
                     reader = io.TextIOWrapper(tar_file.extractfile(b))
                     raw_text = reader.read(None).splitlines()
                     processed_lines = cls.__process_lines(raw_text, tokenize, preprocess)
                     for l in processed_lines:
+                        if len(l) > max_len:
+                            continue
                         converted_line = [wtoi[w] for w in l]
-                        corpus_ds[line, :len(l)] = converted_line
+                        corpus_ds[position:position+len(l)] = converted_line
+                        start_len_ds[line] = (position, position+len(l))
+                        position += len(l)
                         line += 1
-
-
 
 
 class CorpusLoader(object):
