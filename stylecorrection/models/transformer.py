@@ -44,6 +44,7 @@ class TransformerS2S(nn.Module):
         self.enc = nn.TransformerEncoder(tel, num_enc_layers, norm=l_norm)
         self.dec = nn.TransformerDecoder(tdl, num_dec_layers, norm=l_norm)
         self.lin = nn.Linear(emb_dim, num_emb)
+        self.device = device
 
     def forward(self, enc_input, dec_input, input_key_mask, output_key_mask, out_offsets):
         in_embedded = self.pe(self.emb(enc_input))
