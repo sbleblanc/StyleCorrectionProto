@@ -11,7 +11,7 @@ parser.add_argument('-c', '--config', required=True)
 params = parser.parse_args()
 
 with open(params.config, 'r') as in_file:
-    config = yaml.load(in_file)
+    config = yaml.load(in_file, Loader=yaml.FullLoader)
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -22,6 +22,7 @@ if config['mode'] == 'hd5_gen':
         config['H5CorpusLoader_create']['corpus_tar_gz'],
         lambda x: x.strip().split(' '),
         None,
+        config['H5CorpusLoader_create']['topk'],
         config['H5CorpusLoader_create']['max_len']
     )
     print('DONE')
