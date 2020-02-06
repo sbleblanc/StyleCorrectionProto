@@ -1,5 +1,6 @@
 import argparse
 import yaml
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -15,11 +16,13 @@ with open(params.config, 'r') as in_file:
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
+h5_fn = os.path.expandvars(config['h5_fn'])
+
 if config['mode'] == 'hd5_gen':
     print('Creating hd5 dataset...')
     H5CorpusLoader.create_from_compressed(
-        config['H5CorpusLoader_create']['h5_fn'],
-        config['H5CorpusLoader_create']['corpus_tar_gz'],
+        h5_fn,
+        os.path.expandvars(config['H5CorpusLoader_create']['corpus_tar_gz']),
         lambda x: x.strip().split(' '),
         None,
         config['H5CorpusLoader_create']['topk'],
@@ -27,14 +30,20 @@ if config['mode'] == 'hd5_gen':
     )
     print('DONE')
 
+elif config['mode'] == 'gen_split':
+    print('Generating train/valid split...')
+    H5CorpusLoader.generate_split(
+        h5_fn,
+        config['H5CorpusLoader_gen_split']['valid_ratio']
+    )
+    print('DONE')
+
 elif config['mode'] == 'pretrain':
     print('Starting Pretraining...')
 
     cl = H5CorpusLoader.load_and_split(
-        config['H5CorpusLoader_load']['h5_fn'],
-        config['H5CorpusLoader_load']['generate_valid_split'],
+        h5_fn,
         config['H5CorpusLoader_load']['valid_split_id'],
-        config['H5CorpusLoader_load']['valid_ratio'],
         config['H5CorpusLoader_load']['vocab_topk'],
         config['H5CorpusLoader_load']['min_freq'],
         device=device
@@ -49,7 +58,10 @@ elif config['mode'] == 'pretrain':
         config['TransformerS2S']['num_enc_layers'],
         config['TransformerS2S']['num_dec_layers'],
         device=device
-    ).to(device)
+    )
+    if torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model)
+    model.to(device)
     optimizer = optim.Adam(model.parameters())
     criterion = nn.CrossEntropyLoss(ignore_index=cl.pad_idx).to(device)
 

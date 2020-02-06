@@ -92,36 +92,37 @@ class H5CorpusLoader(object):
 
 
     @classmethod
+    def generate_split(cls,
+                       h5_fn: str,
+                       valid_ratio: float = 0.2):
+        with h5py.File(h5_fn, 'r+') as h5_file:
+            valid_selector = np.zeros(h5_file['sentences'].shape[0])
+            num_valid_sentences = int(h5_file['sentences'].shape[0] * valid_ratio)
+            valid_selector[np.random.randint(0, h5_file['sentences'].shape[0], num_valid_sentences)] = 1
+
+            if 'splits' not in h5_file:
+                dt = h5py.vlen_dtype(np.dtype('int32'))
+                splits_ds = h5_file.create_dataset('splits', (20,), dtype=dt)
+                splits_ds.attrs['num_splits'] = 0
+            else:
+                splits_ds = h5_file['splits']
+
+            splits_ds[splits_ds.attrs['num_splits']] = valid_selector
+            splits_ds.attrs['num_splits'] += 1
+
+    @classmethod
     def load_and_split(cls,
                        h5_fn: str,
-                       generate_split: bool = False,
                        use_split_id: int = 0,
-                       valid_ratio: float = 0.2,
                        vocab_topk: int = 0,
                        min_freq: int = 2,
                        device: str = "cpu"):
-        with h5py.File(h5_fn, 'r+') as h5_file:
+        with h5py.File(h5_fn, 'r') as h5_file:
             corpus = h5_file['corpus'][:]
             sentences = h5_file['sentences'][:, :]
             global_vocab = h5_file['vocab'][:]
-
-            if generate_split:
-                valid_selector = np.zeros(sentences.shape[0])
-                num_valid_sentences = int(sentences.shape[0] * valid_ratio)
-                valid_selector[np.random.randint(0, sentences.shape[0], num_valid_sentences)] = 1
-
-                if 'splits' not in h5_file:
-                    dt = h5py.vlen_dtype(np.dtype('int32'))
-                    splits_ds = h5_file.create_dataset('splits', (20, ), dtype=dt)
-                    splits_ds.attrs['num_splits'] = 0
-                else:
-                    splits_ds = h5_file['splits']
-
-                splits_ds[splits_ds.attrs['num_splits']] = valid_selector
-                splits_ds.attrs['num_splits'] += 1
-            else:
-                splits_ds = h5_file['splits']
-                valid_selector = splits_ds[use_split_id]
+            splits_ds = h5_file['splits']
+            valid_selector = splits_ds[use_split_id]
 
             splits = dict()
             splits['valid'] = torch.from_numpy(np.stack(list(it.compress(sentences, valid_selector)), axis=0).astype(np.int))
