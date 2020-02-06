@@ -56,8 +56,7 @@ elif config['mode'] == 'pretrain':
         config['TransformerS2S']['n_head'],
         config['TransformerS2S']['ff_dim'],
         config['TransformerS2S']['num_enc_layers'],
-        config['TransformerS2S']['num_dec_layers'],
-        device=device
+        config['TransformerS2S']['num_dec_layers']
     )
     if torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)

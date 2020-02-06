@@ -33,8 +33,7 @@ class TransformerS2S(nn.Module):
                  nhead: int = 8,
                  ff_dim: int = 2048,
                  num_enc_layers: int = 6,
-                 num_dec_layers: int = 6,
-                 device="cpu"):
+                 num_dec_layers: int = 6):
         super(TransformerS2S, self).__init__()
 
         self.emb = nn.Embedding(num_emb, emb_dim)
@@ -45,11 +44,12 @@ class TransformerS2S(nn.Module):
         self.enc = nn.TransformerEncoder(tel, num_enc_layers, norm=l_norm)
         self.dec = nn.TransformerDecoder(tdl, num_dec_layers, norm=l_norm)
         self.lin = nn.Linear(emb_dim, num_emb)
-        self.device = device
+        dec_mask = torch.ones(175, 175).tril()
+        self.register_buffer('dec_mask', dec_mask)
 
     def forward(self, enc_input, dec_input, input_key_mask, output_key_mask, out_offsets):
         in_embedded = self.pe(self.emb(enc_input))
         encoded = self.enc(in_embedded.transpose(1, 0), src_key_padding_mask=input_key_mask)
         out_embedded = self.pe(self.emb(dec_input), out_offsets)
-        decoded = self.dec(out_embedded.transpose(1, 0), encoded, torch.ones(dec_input.shape[1], dec_input.shape[1]).tril().to(self.device), tgt_key_padding_mask=output_key_mask, memory_key_padding_mask=input_key_mask)
+        decoded = self.dec(out_embedded.transpose(1, 0), encoded, self.dec_mask, tgt_key_padding_mask=output_key_mask, memory_key_padding_mask=input_key_mask)
         return self.lin(decoded).transpose(1, 0)
