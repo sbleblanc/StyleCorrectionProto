@@ -5,16 +5,17 @@ import torch.nn as nn
 
 class PositionalEncoding(nn.Module):
 
-    def __init__(self, d_model, dropout=0.1, max_len=5000, device="cpu"):
+    def __init__(self, d_model, dropout=0.1, max_len=5000):
         super(PositionalEncoding, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
 
-        self.pe = torch.zeros(max_len, d_model).to(device)
+        self.pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         self.pe[:, 0::2] = torch.sin(position * div_term)
         self.pe[:, 1::2] = torch.cos(position * div_term)
         self.pe = self.pe.unsqueeze(0)
+        self.register_buffer('pe', self.pe)
 
     def forward(self, x, offsets=None):
         if offsets is not None:
@@ -37,7 +38,7 @@ class TransformerS2S(nn.Module):
         super(TransformerS2S, self).__init__()
 
         self.emb = nn.Embedding(num_emb, emb_dim)
-        self.pe = PositionalEncoding(emb_dim, device=device)
+        self.pe = PositionalEncoding(emb_dim)
         l_norm = nn.LayerNorm(emb_dim)
         tel = nn.TransformerEncoderLayer(emb_dim, nhead, ff_dim)
         tdl = nn.TransformerDecoderLayer(emb_dim, nhead, ff_dim)
