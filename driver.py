@@ -70,9 +70,12 @@ elif config['mode'] == 'pretrain':
 
         best_valid_loss = float('inf')
         patience_counter = 0
+        bs = config['pretraining']['bs']
+        batch_counter = 0
 
+        print('[Training]')
         model.train()
-        for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds(bs=config['pretraining']['bs']):
+        for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds(bs=bs):
             optimizer.zero_grad()
             out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
             loss = criterion(out.contiguous().view(-1, len(cl.vocab)), dec_out.view(-1))
@@ -80,11 +83,21 @@ elif config['mode'] == 'pretrain':
             train_losses.append(loss.item())
             optimizer.step()
 
+            if int(batch_counter / pds.get_num_sentences('train') * 100) % 1 == 0:
+                print('Progress: {:.2%}'.format(batch_counter/pds.get_num_sentences('train')))
+            batch_counter += 1
+
+        batch_counter = 0
+        print('[Validating]')
         model.eval()
-        for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds(bs=config['pretraining']['bs'], which='valid'):
+        for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds(bs=bs, which='valid'):
             out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
             loss = criterion(out.contiguous().view(-1, len(cl.vocab)), dec_out.view(-1))
             valid_losses.append(loss.item())
+
+            if (batch_counter / pds.get_num_sentences('valid') * 100) % 10 == 0:
+                print('Progress: {:.2%}'.format(batch_counter/pds.get_num_sentences('valid')))
+            batch_counter += 1
 
         enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets = next(pds(bs=1, which='valid'))
         out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)

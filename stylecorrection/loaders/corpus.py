@@ -202,6 +202,9 @@ class H5CorpusLoader(object):
                 longest = 0
                 batch.clear()
 
+    def get_num_sentences(self, which):
+        return self.sentences[which].shape[0]
+
     @property
     def mask_idx(self):
         return self.wtoi[self.mask_token]
@@ -398,6 +401,9 @@ class PretrainingDataset(object):
         self.noising_probs = torch.tensor([masking_prob, random_prob, keeping_prob]).to(device)
         assert self.noising_probs.sum() == 1.
         self.device = device
+
+    def get_num_sentences(self, which):
+        return self.src_ds.get_num_sentences(which)
 
     def __call__(self,
                  bs: int = 32,
