@@ -72,22 +72,22 @@ elif config['mode'] == 'pretrain':
         patience_counter = 0
 
         model.train()
-        for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets, dec_mask in pds(bs=config['pretraining']['bs']):
+        for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds(bs=config['pretraining']['bs']):
             optimizer.zero_grad()
-            out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets, dec_mask)
+            out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
             loss = criterion(out.contiguous().view(-1, len(cl.vocab)), dec_out.view(-1))
             loss.backward()
             train_losses.append(loss.item())
             optimizer.step()
 
         model.eval()
-        for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets, dec_mask in pds(bs=config['pretraining']['bs'], which='valid'):
-            out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets, dec_mask)
+        for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds(bs=config['pretraining']['bs'], which='valid'):
+            out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
             loss = criterion(out.contiguous().view(-1, len(cl.vocab)), dec_out.view(-1))
             valid_losses.append(loss.item())
 
-        enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets, dec_mask = next(pds(bs=1, which='valid'))
-        out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets, dec_mask)
+        enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets = next(pds(bs=1, which='valid'))
+        out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
         enc_input = cl.decode_tensor(enc_in)
         expected_output = cl.decode_tensor(dec_out)
         predicted_output = cl.decode_tensor(out.argmax(dim=2))
