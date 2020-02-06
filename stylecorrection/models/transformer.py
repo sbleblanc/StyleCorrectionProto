@@ -44,12 +44,10 @@ class TransformerS2S(nn.Module):
         self.enc = nn.TransformerEncoder(tel, num_enc_layers, norm=l_norm)
         self.dec = nn.TransformerDecoder(tdl, num_dec_layers, norm=l_norm)
         self.lin = nn.Linear(emb_dim, num_emb)
-        dec_mask = torch.ones(175, 175).tril()
-        self.register_buffer('dec_mask', dec_mask)
 
-    def forward(self, enc_input, dec_input, input_key_mask, output_key_mask, out_offsets):
+    def forward(self, enc_input, dec_input, input_key_mask, output_key_mask, out_offsets, dec_mask):
         in_embedded = self.pe(self.emb(enc_input))
         encoded = self.enc(in_embedded.transpose(1, 0), src_key_padding_mask=input_key_mask)
         out_embedded = self.pe(self.emb(dec_input), out_offsets)
-        decoded = self.dec(out_embedded.transpose(1, 0), encoded, self.dec_mask, tgt_key_padding_mask=output_key_mask, memory_key_padding_mask=input_key_mask)
+        decoded = self.dec(out_embedded.transpose(1, 0), encoded, dec_mask, tgt_key_padding_mask=output_key_mask, memory_key_padding_mask=input_key_mask)
         return self.lin(decoded).transpose(1, 0)

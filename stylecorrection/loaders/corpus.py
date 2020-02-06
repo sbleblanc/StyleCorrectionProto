@@ -431,6 +431,7 @@ class PretrainingDataset(object):
             input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
             output_key_mask = torch.zeros_like(segments).bool().to(self.device)
             offsets = torch.zeros([batch.shape[0], longest], dtype=torch.long).to(self.device)
+            dec_mask = torch.ones([longest, longest]).tril().to(device)
             for bi, seg in enumerate(clean_segments):
                 segments[bi, :len(seg)] = seg
                 shifted_segments[bi, 1:len(seg)] = seg[:-1]
@@ -438,7 +439,7 @@ class PretrainingDataset(object):
                 input_key_mask[bi, lengths[bi]:] = True
                 output_key_mask[bi, len(seg):] = True
 
-            yield noised_batch, input_key_mask, segments, shifted_segments, output_key_mask, offsets
+            yield noised_batch, input_key_mask, segments, shifted_segments, output_key_mask, offsets, dec_mask
 
 
 class DirectNoiseDataset(object):
