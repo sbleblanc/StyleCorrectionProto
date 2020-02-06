@@ -37,6 +37,7 @@ class H5CorpusLoader(object):
                                corpus_tar_gz: str,
                                tokenize: Callable[[str], List[str]],
                                preprocess: Callable[[str], str] = None,
+                               topk: int = 0,
                                max_len: int = 175):
         vocab = [cls.mask_token,
                  cls.pad_token,
@@ -46,6 +47,8 @@ class H5CorpusLoader(object):
         wtoi = dict([(w, i) for i, w in enumerate(vocab)])
         with tarfile.open(corpus_tar_gz, 'r:gz') as tar_file:
             books = tar_file.getmembers()
+            if topk > 0:
+                books = books[:topk]
             print('Counting...', end='')
             word_count = 0
             sent_count = 0
@@ -91,17 +94,35 @@ class H5CorpusLoader(object):
     @classmethod
     def load_and_split(cls,
                        h5_fn: str,
+                       generate_split: bool = False,
+                       use_split_id: int = 0,
                        valid_ratio: float = 0.2,
                        vocab_topk: int = 0,
                        min_freq: int = 2,
                        device: str = "cpu"):
-        with h5py.File(h5_fn, 'r') as h5_file:
+        with h5py.File(h5_fn, 'r+') as h5_file:
             corpus = h5_file['corpus'][:]
             sentences = h5_file['sentences'][:, :]
             global_vocab = h5_file['vocab'][:]
-            valid_selector = np.zeros(sentences.shape[0])
-            num_valid_sentences = int(sentences.shape[0] * valid_ratio)
-            valid_selector[np.random.randint(0, sentences.shape[0], num_valid_sentences)] = 1
+
+            if generate_split:
+                valid_selector = np.zeros(sentences.shape[0])
+                num_valid_sentences = int(sentences.shape[0] * valid_ratio)
+                valid_selector[np.random.randint(0, sentences.shape[0], num_valid_sentences)] = 1
+
+                if 'splits' not in h5_file:
+                    dt = h5py.vlen_dtype(np.dtype('int32'))
+                    splits_ds = h5_file.create_dataset('splits', (20, ), dtype=dt)
+                    splits_ds.attrs['num_splits'] = 0
+                else:
+                    splits_ds = h5_file['splits']
+
+                splits_ds[splits_ds.attrs['num_splits']] = valid_selector
+                splits_ds.attrs['num_splits'] += 1
+            else:
+                splits_ds = h5_file['splits']
+                valid_selector = splits_ds[use_split_id]
+
             splits = dict()
             splits['valid'] = torch.from_numpy(np.stack(list(it.compress(sentences, valid_selector)), axis=0).astype(np.int))
             splits['train'] = torch.from_numpy(np.stack(list(it.compress(sentences, 1-valid_selector)), axis=0).astype(np.int))
@@ -362,7 +383,6 @@ class CorpusLoader(object):
             decoded_sent.append(' '.join(sent))
 
         return decoded_sent
-
 
 
 class PretrainingDataset(object):

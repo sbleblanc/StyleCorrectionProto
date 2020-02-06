@@ -1,47 +1,103 @@
+import argparse
+import yaml
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from stylecorrection.loaders.corpus import CorpusLoader, PretrainingDataset, DirectNoiseDataset, H5CorpusLoader
 from stylecorrection.models.transformer import TransformerS2S
 
+parser = argparse.ArgumentParser()
+parser.add_argument('-c', '--config', required=True)
+params = parser.parse_args()
+
+with open(params.config, 'r') as in_file:
+    config = yaml.load(in_file)
+
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-cl = H5CorpusLoader.load_and_split('temp/datasets/BookCorpus_unique.h5', device=device)
-pds = PretrainingDataset(cl, device=device)
+if config['mode'] == 'hd5_gen':
+    print('Creating hd5 dataset...')
+    H5CorpusLoader.create_from_compressed(
+        config['H5CorpusLoader_create']['h5_fn'],
+        config['H5CorpusLoader_create']['corpus_tar_gz'],
+        lambda x: x.strip().split(' '),
+        None,
+        config['H5CorpusLoader_create']['max_len']
+    )
+    print('DONE')
 
-model = TransformerS2S(len(cl.vocab), 24, device=device).to(device)
-optimizer = optim.Adam(model.parameters())
-criterion = nn.CrossEntropyLoss(ignore_index=cl.pad_idx).to(device)
+elif config['mode'] == 'pretrain':
+    print('Starting Pretraining...')
 
-for i in range(100):
-    train_losses = []
-    valid_losses = []
+    cl = H5CorpusLoader.load_and_split(
+        config['H5CorpusLoader_load']['h5_fn'],
+        config['H5CorpusLoader_load']['generate_valid_split'],
+        config['H5CorpusLoader_load']['valid_split_id'],
+        config['H5CorpusLoader_load']['valid_ratio'],
+        config['H5CorpusLoader_load']['vocab_topk'],
+        config['H5CorpusLoader_load']['min_freq'],
+        device=device
+    )
+    pds = PretrainingDataset(cl, device=device)
 
-    model.train()
-    for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds():
-        optimizer.zero_grad()
+    model = TransformerS2S(
+        len(cl.vocab),
+        config['TransformerS2S']['emb_dim'],
+        config['TransformerS2S']['n_head'],
+        config['TransformerS2S']['ff_dim'],
+        config['TransformerS2S']['num_enc_layers'],
+        config['TransformerS2S']['num_dec_layers'],
+        device=device
+    ).to(device)
+    optimizer = optim.Adam(model.parameters())
+    criterion = nn.CrossEntropyLoss(ignore_index=cl.pad_idx).to(device)
+
+    for i in range(config['pretraining']['max_epoch']):
+        train_losses = []
+        valid_losses = []
+
+        best_valid_loss = float('inf')
+        patience_counter = 0
+
+        model.train()
+        for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds(bs=config['pretraining']['bs']):
+            optimizer.zero_grad()
+            out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
+            loss = criterion(out.contiguous().view(-1, len(cl.vocab)), dec_out.view(-1))
+            loss.backward()
+            train_losses.append(loss.item())
+            optimizer.step()
+
+        model.eval()
+        for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds(bs=config['pretraining']['bs'], which='valid'):
+            out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
+            loss = criterion(out.contiguous().view(-1, len(cl.vocab)), dec_out.view(-1))
+            valid_losses.append(loss.item())
+
+        enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets = next(pds(bs=1, which='valid'))
         out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
-        loss = criterion(out.contiguous().view(-1, len(cl.vocab)), dec_out.view(-1))
-        loss.backward()
-        train_losses.append(loss.item())
-        optimizer.step()
+        enc_input = cl.decode_tensor(enc_in)
+        expected_output = cl.decode_tensor(dec_out)
+        predicted_output = cl.decode_tensor(out.argmax(dim=2))
 
-    model.eval()
-    for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds(which='valid'):
-        out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
-        loss = criterion(out.contiguous().view(-1, len(cl.vocab)), dec_out.view(-1))
-        valid_losses.append(loss.item())
+        print()
+        print('Masked sequence : {}'.format(enc_input))
+        print('Expected segment : {}'.format(expected_output))
+        print('Predicted segment: {}'.format(predicted_output))
+        print()
 
-    enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets = next(pds(bs=1, which='valid'))
-    out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
-    enc_input = cl.decode_tensor(enc_in)
-    expected_output = cl.decode_tensor(dec_out)
-    predicted_output = cl.decode_tensor(out.argmax(dim=2))
+        train_loss_mean = torch.tensor(train_losses).mean()
+        valid_loss_mean = torch.tensor(valid_losses).mean()
+        print('Iteration {} : Train:{:.4f}, Valid:{:.4f}'.format(i, train_loss_mean, valid_loss_mean))
 
-    print()
-    print('Masked sequence : {}'.format(enc_input))
-    print('Expected segment : {}'.format(expected_output))
-    print('Predicted segment: {}'.format(predicted_output))
-    print()
+        if valid_loss_mean < best_valid_loss:
+            with open(config['pretraining']['model_save_fn'], 'wb') as out_file:
+                torch.save(model.state_dict(), out_file)
+            patience_counter = 0
+        else:
+            patience_counter += 1
 
-    print('Iteration {} : Train:{:.4f}, Valid:{:.4f}'.format(i, torch.tensor(train_losses).mean(), torch.tensor(valid_losses).mean()))
+        if patience_counter > config['pretraining']['valid_patience']:
+            print('Patience threashold reached')
+            break
+    print('DONE')
