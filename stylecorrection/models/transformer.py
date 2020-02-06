@@ -15,7 +15,7 @@ class PositionalEncoding(nn.Module):
         self.pe[:, 0::2] = torch.sin(position * div_term)
         self.pe[:, 1::2] = torch.cos(position * div_term)
         self.pe = self.pe.unsqueeze(0)
-        self.register_buffer('pe', self.pe)
+        self.register_buffer('pc_pe', self.pe)
 
     def forward(self, x, offsets=None):
         if offsets is not None:
