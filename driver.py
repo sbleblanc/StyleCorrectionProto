@@ -72,6 +72,7 @@ elif config['mode'] == 'pretrain':
         patience_counter = 0
         bs = config['pretraining']['bs']
         batch_counter = 0
+        progress = -1
 
         print('[Training]')
         model.train()
@@ -83,11 +84,14 @@ elif config['mode'] == 'pretrain':
             train_losses.append(loss.item())
             optimizer.step()
 
-            if int(batch_counter / pds.get_num_sentences('train') * 100) % 1 == 0:
+            current_progress = int(batch_counter / pds.get_num_sentences('train') * 100)
+            if current_progress % 1 == 0 and progress != current_progress:
                 print('Progress: {:.2%}'.format(batch_counter/pds.get_num_sentences('train')))
+                progress = current_progress
             batch_counter += 1
 
         batch_counter = 0
+        progress = -1
         print('[Validating]')
         model.eval()
         for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds(bs=bs, which='valid'):
@@ -95,8 +99,10 @@ elif config['mode'] == 'pretrain':
             loss = criterion(out.contiguous().view(-1, len(cl.vocab)), dec_out.view(-1))
             valid_losses.append(loss.item())
 
-            if (batch_counter / pds.get_num_sentences('valid') * 100) % 10 == 0:
+            current_progress = int(batch_counter / pds.get_num_sentences('valid') * 100)
+            if current_progress % 1 == 0 and progress != current_progress:
                 print('Progress: {:.2%}'.format(batch_counter/pds.get_num_sentences('valid')))
+                progress = current_progress
             batch_counter += 1
 
         enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets = next(pds(bs=1, which='valid'))
