@@ -58,7 +58,7 @@ elif config['mode'] == 'pretrain':
         config['TransformerS2S']['num_enc_layers'],
         config['TransformerS2S']['num_dec_layers']
     )
-    if config['h5_fn']['multi_gpu'] and torch.cuda.device_count() > 1:
+    if config['multi_gpu'] and torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
     model.to(device)
     optimizer = optim.Adam(model.parameters())
