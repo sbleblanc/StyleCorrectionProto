@@ -4,7 +4,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from stylecorrection.loaders.corpus import CorpusLoader, PretrainingDataset, DirectNoiseDataset, H5CorpusLoader
+from stylecorrection.loaders.corpus import  PretrainingDataset, H5CorpusLoader
 from stylecorrection.models.transformer import TransformerS2S
 
 parser = argparse.ArgumentParser()
@@ -66,17 +66,50 @@ elif config['mode'] == 'pretrain':
 
     for i in range(config['pretraining']['max_epoch']):
         train_losses = []
-        valid_losses = []
 
         best_valid_loss = float('inf')
         patience_counter = 0
         bs = config['pretraining']['bs']
-        batch_counter = 0
-        progress = -1
 
-        print('[Training]')
         model.train()
-        for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds(bs=bs):
+        for tbi, (enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets) in enumerate(pds(bs=bs)):
+
+            if tbi % config['eval']['interval'] == 0:
+                model.eval()
+                valid_losses = []
+                with torch.no_grad():
+                    for vbi, (enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets) in enumerate(pds(bs=bs, which='valid')):
+                        out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
+                        loss = criterion(out.contiguous().view(-1, len(cl.vocab)), dec_out.view(-1))
+                        valid_losses.append(loss.item())
+                        if vbi == config['eval']['num_valid_batch']:
+                            break
+                    enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets = next(pds(bs=1, which='valid'))
+                    out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
+                    enc_input = cl.decode_tensor(enc_in)
+                    expected_output = cl.decode_tensor(dec_out)
+                    predicted_output = cl.decode_tensor(out.argmax(dim=2))
+
+                    print()
+                    print('Masked sequence : {}'.format(enc_input))
+                    print('Expected segment : {}'.format(expected_output))
+                    print('Predicted segment: {}'.format(predicted_output))
+                    print()
+
+                    train_loss_mean = torch.tensor(train_losses).mean()
+                    valid_loss_mean = torch.tensor(valid_losses).mean()
+                    print('{}: Batch {}/{} : Train:{:.4f}, Valid:{:.4f}'.format(i, tbi*bs, pds.get_num_sentences('train'), train_loss_mean, valid_loss_mean))
+
+                    if valid_loss_mean < best_valid_loss:
+                        with open(config['pretraining']['model_save_fn'], 'wb') as out_file:
+                            torch.save(model.state_dict(), out_file)
+                        patience_counter = 0
+                    else:
+                        patience_counter += 1
+
+                train_losses.clear()
+                model.train()
+
             optimizer.zero_grad()
             out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
             loss = criterion(out.contiguous().view(-1, len(cl.vocab)), dec_out.view(-1))
@@ -84,51 +117,7 @@ elif config['mode'] == 'pretrain':
             train_losses.append(loss.item())
             optimizer.step()
 
-            current_progress = int(batch_counter / pds.get_num_sentences('train') * 100)
-            if current_progress % 1 == 0 and progress != current_progress:
-                print('Progress: {:.2%}'.format(batch_counter/pds.get_num_sentences('train')))
-                progress = current_progress
-            batch_counter += 1
-
-        batch_counter = 0
-        progress = -1
-        print('[Validating]')
-        model.eval()
-        for enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets in pds(bs=bs, which='valid'):
-            out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
-            loss = criterion(out.contiguous().view(-1, len(cl.vocab)), dec_out.view(-1))
-            valid_losses.append(loss.item())
-
-            current_progress = int(batch_counter / pds.get_num_sentences('valid') * 100)
-            if current_progress % 1 == 0 and progress != current_progress:
-                print('Progress: {:.2%}'.format(batch_counter/pds.get_num_sentences('valid')))
-                progress = current_progress
-            batch_counter += 1
-
-        enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets = next(pds(bs=1, which='valid'))
-        out = model(enc_in, dec_in, enc_in_key_mask, dec_in_key_mask, offsets)
-        enc_input = cl.decode_tensor(enc_in)
-        expected_output = cl.decode_tensor(dec_out)
-        predicted_output = cl.decode_tensor(out.argmax(dim=2))
-
-        print()
-        print('Masked sequence : {}'.format(enc_input))
-        print('Expected segment : {}'.format(expected_output))
-        print('Predicted segment: {}'.format(predicted_output))
-        print()
-
-        train_loss_mean = torch.tensor(train_losses).mean()
-        valid_loss_mean = torch.tensor(valid_losses).mean()
-        print('Iteration {} : Train:{:.4f}, Valid:{:.4f}'.format(i, train_loss_mean, valid_loss_mean))
-
-        if valid_loss_mean < best_valid_loss:
-            with open(config['pretraining']['model_save_fn'], 'wb') as out_file:
-                torch.save(model.state_dict(), out_file)
-            patience_counter = 0
-        else:
-            patience_counter += 1
-
         if patience_counter > config['pretraining']['valid_patience']:
-            print('Patience threashold reached')
+            print('Patience threshold reached')
             break
     print('DONE')
