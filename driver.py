@@ -104,6 +104,7 @@ elif config['mode'] == 'pretrain':
                         with open(config['pretraining']['model_save_fn'], 'wb') as out_file:
                             torch.save(model.state_dict(), out_file)
                         patience_counter = 0
+                        best_valid_loss = valid_loss_mean
                     else:
                         patience_counter += 1
 
