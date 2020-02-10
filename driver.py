@@ -61,7 +61,17 @@ elif config['mode'] == 'pretrain':
     if config['multi_gpu'] and torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
     model.to(device)
-    optimizer = optim.Adam(model.parameters())
+    if config['optimizer'] == 'adam':
+        optimizer = optim.Adam(model.parameters(),
+                               lr=config['adam']['lr'],
+                               betas=(config['adam']['beta_1'], config['adam']['beta_2']),
+                               eps=config['adam']['eps'])
+    elif config['optimizer'] == 'sgd':
+        optimizer = optim.SGD(model.parameters(),
+                              lr=config['sgd']['lr'],
+                              momentum=config['sgd']['momentum'],
+                              weight_decay=config['sgd']['weight_decay'],
+                              nesterov=config['sgd']['nesterov'])
     criterion = nn.CrossEntropyLoss(ignore_index=cl.pad_idx).to(device)
 
     for i in range(config['pretraining']['max_epoch']):
