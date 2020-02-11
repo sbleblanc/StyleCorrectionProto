@@ -7,6 +7,31 @@ import torch.optim as optim
 from stylecorrection.loaders.corpus import  PretrainingDataset, H5CorpusLoader
 from stylecorrection.models.transformer import TransformerS2S
 
+# cl = H5CorpusLoader.load_and_split(
+#     'temp/datasets/simple_wiki.h5',
+#     vocab_topk=50000
+# )
+# model = TransformerS2S(
+#     len(cl.vocab),
+#     512,
+#     ff_dim=4096
+# )
+# with open('temp/models/simple_wiki_pretrained_adam_fixed.pkl', 'rb') as in_file:
+#     model.load_state_dict(torch.load(in_file))
+# model.eval()
+#
+# test_sentence = cl.encode_sentence('kyle martino <mask> born <mask> <mask> the <mask> <mask> in atlanta , georgia .')
+#
+# res = model.beam_decode(
+#     test_sentence,
+#     torch.tensor([cl.mask_idx], dtype=torch.long),
+#     beam_width=5,
+#     max_len=7,
+#     position_offset=3
+# )
+#
+# cl.decode_tensor(torch.tensor(res, dtype=torch.long))
+
 parser = argparse.ArgumentParser()
 parser.add_argument('-c', '--config', required=True)
 params = parser.parse_args()
@@ -74,13 +99,12 @@ elif config['mode'] == 'pretrain':
                               nesterov=config['sgd']['nesterov'])
     criterion = nn.CrossEntropyLoss(ignore_index=cl.pad_idx).to(device)
 
+    train_losses = []
+    best_valid_loss = float('inf')
+    patience_counter = 0
+    bs = config['pretraining']['bs']
+
     for i in range(config['pretraining']['max_epoch']):
-        train_losses = []
-
-        best_valid_loss = float('inf')
-        patience_counter = 0
-        bs = config['pretraining']['bs']
-
         model.train()
         for tbi, (enc_in, enc_in_key_mask, dec_out, dec_in, dec_in_key_mask, offsets) in enumerate(pds(bs=bs)):
 
