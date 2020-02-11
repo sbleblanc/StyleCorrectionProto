@@ -213,6 +213,19 @@ class H5CorpusLoader(object):
     def pad_idx(self):
         return self.wtoi[self.pad_token]
 
+    @property
+    def bos_idx(self):
+        return self.wtoi[self.bos_token]
+
+    @property
+    def eos_idx(self):
+        return self.wtoi[self.eos_token]
+
+    def encode_sentence(self,
+                        sentence: str):
+        encoded = [self.bos_idx] + [self.wtoi[w] for w in sentence.split(' ')] + [self.eos_idx]
+        return torch.tensor(encoded, dtype=torch.long, requires_grad=False)
+
     def decode_tensor(self, t: torch.Tensor) -> List[str]:
         if t.dim() == 1:
             t = t.unsqueeze(0)

@@ -45,10 +45,52 @@ class TransformerS2S(nn.Module):
         self.dec = nn.TransformerDecoder(tdl, num_dec_layers, norm=l_norm)
         self.lin = nn.Linear(emb_dim, num_emb)
 
-    def forward(self, enc_input, dec_input, input_key_mask, output_key_mask, out_offsets):
+    def encode(self, enc_input, input_key_mask):
         in_embedded = self.pe(self.emb(enc_input))
         encoded = self.enc(in_embedded.transpose(1, 0), src_key_padding_mask=input_key_mask)
+        return encoded
+
+    def decode(self, encoded, input_key_mask, dec_input, output_key_mask, out_offsets):
         out_embedded = self.pe(self.emb(dec_input), out_offsets)
-        dec_mask = torch.ones([dec_input.shape[1], dec_input.shape[1]], device=dec_input.device)
-        decoded = self.dec(out_embedded.transpose(1, 0), encoded, dec_mask, tgt_key_padding_mask=output_key_mask, memory_key_padding_mask=input_key_mask)
+        dec_mask = torch.ones([dec_input.shape[1], dec_input.shape[1]], device=dec_input.device).tril()
+        decoded = self.dec(out_embedded.transpose(1, 0), encoded, dec_mask, tgt_key_padding_mask=output_key_mask,
+                           memory_key_padding_mask=input_key_mask)
         return self.lin(decoded).transpose(1, 0)
+
+    def forward(self, enc_input, dec_input, input_key_mask, output_key_mask, out_offsets):
+        encoded = self.encode(enc_input, input_key_mask)
+        return self.decode(encoded, input_key_mask, dec_input, output_key_mask, out_offsets)
+
+    def beam_decode(self,
+                    input: torch.Tensor,
+                    output_seed: torch.Tensor,
+                    beam_width: int = 5,
+                    max_len: int = 175,
+                    end_token: int = -1,
+                    position_offset: int = 0):
+        if input.ndim == 1:
+            input = input.unsqueeze(0)
+        # if output_seed.ndim == 1:
+        #     output_seed = output_seed.unsqueeze(0)
+
+        encoded_input = self.encode(input, None)
+
+        candidates = [(0, output_seed.tolist())]
+        for pi in range(max_len):
+            potential_candidates = []
+            for prob, candidate in candidates:
+                offset = torch.arange(position_offset, position_offset+len(candidate))
+                t_candidate = torch.tensor(candidate, dtype=torch.long).unsqueeze(0)
+                decoded = self.decode(encoded_input, None, t_candidate, None, offset)
+                probs, indices = nn.functional.log_softmax(decoded, dim=-1).sort(dim=-1, descending=True)
+                for p, vi in zip(probs[0, -1, :beam_width], indices[0, -1, :beam_width]):
+                    potential_candidates.append((p.item() + prob, candidate + [vi.item()]))
+
+            candidates.clear()
+            potential_candidates = sorted(potential_candidates, key=lambda x: x[0], reverse=True)
+            for i in range(beam_width):
+                if potential_candidates[i][1][-1] == end_token:
+                    return potential_candidates[i][1]
+                candidates.append(potential_candidates[i])
+
+        return candidates[0][1]
