@@ -45,6 +45,11 @@ class TransformerS2S(nn.Module):
         self.dec = nn.TransformerDecoder(tdl, num_dec_layers, norm=l_norm)
         self.lin = nn.Linear(emb_dim, num_emb)
 
+    def _generate_square_subsequent_mask(self, sz):
+        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+        return mask
+
     def encode(self, enc_input, input_key_mask):
         in_embedded = self.pe(self.emb(enc_input))
         encoded = self.enc(in_embedded.transpose(1, 0), src_key_padding_mask=input_key_mask)
@@ -52,7 +57,7 @@ class TransformerS2S(nn.Module):
 
     def decode(self, encoded, input_key_mask, dec_input, output_key_mask, out_offsets):
         out_embedded = self.pe(self.emb(dec_input), out_offsets)
-        dec_mask = torch.ones([dec_input.shape[1], dec_input.shape[1]], device=dec_input.device).tril()
+        dec_mask = self._generate_square_subsequent_mask(dec_input.shape[1]).to(dec_input.device)
         decoded = self.dec(out_embedded.transpose(1, 0), encoded, dec_mask, tgt_key_padding_mask=output_key_mask,
                            memory_key_padding_mask=input_key_mask)
         return self.lin(decoded).transpose(1, 0)
