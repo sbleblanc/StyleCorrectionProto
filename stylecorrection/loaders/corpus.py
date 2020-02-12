@@ -2,6 +2,7 @@ import tarfile
 import io
 import h5py
 import torch
+import torch.nn as nn
 import numpy as np
 import itertools as it
 from collections import Counter
@@ -116,6 +117,8 @@ class H5CorpusLoader(object):
                        use_split_id: int = 0,
                        vocab_topk: int = 0,
                        min_freq: int = 2,
+                       forced_vocab: List[str] = None,
+                       smoothing_alpha: float = 0.,
                        device: str = "cpu"):
         with h5py.File(h5_fn, 'r') as h5_file:
             corpus = h5_file['corpus'][:]
@@ -132,16 +135,24 @@ class H5CorpusLoader(object):
             for i in range(splits['train'].shape[0]):
                 start, end = splits['train'][i]
                 vocab_counter.update(corpus[start:end])
-
-            temp_vocab = list(global_vocab[:5])
-            if vocab_topk == 0:
-                n = len(vocab_counter)
+            if forced_vocab:
+                global_wtoi = dict([(w, i) for i, w in enumerate(global_vocab)])
+                temp_vocab = forced_vocab
+                gtr_mapping = dict([(global_wtoi[w], i + 5) for i, w in enumerate(temp_vocab[5:]) if w in global_wtoi])
+                rtg_mapping = dict([(i + 5, global_wtoi[w]) for i, w in enumerate(temp_vocab[5:]) if w in global_wtoi])
             else:
-                n = vocab_topk
-            temp_vocab.extend([global_vocab[wi] for wi, _ in it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n))])
+                temp_vocab = list(global_vocab[:5])
+                if vocab_topk == 0:
+                    n = len(vocab_counter)
+                else:
+                    n = vocab_topk
+                temp_vocab.extend([global_vocab[wi] for wi, _ in it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n))])
+                gtr_mapping = dict([(wi, i + 5) for i, (wi, _) in
+                                    enumerate(it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n)))])
+                rtg_mapping = dict([(i + 5, wi) for i, (wi, _) in
+                                    enumerate(it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n)))])
             wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
-            gtr_mapping = dict([(wi, i+5) for i, (wi, _) in enumerate(it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n)))])
-            rtg_mapping = dict([(i + 5, wi) for i, (wi, _) in enumerate(it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n)))])
+
             for i in range(corpus.shape[0]):
                 if corpus[i] in gtr_mapping:
                     corpus[i] = gtr_mapping[corpus[i]]
@@ -149,9 +160,12 @@ class H5CorpusLoader(object):
                     corpus[i] = wtoi[cls.unk_token]
 
             unigram_probs = torch.zeros(len(temp_vocab))
+            smoothing = torch.empty(len(temp_vocab)).fill_(smoothing_alpha)
+            smoothing[:5] = 0
             for i in range(5, len(temp_vocab)):
-                unigram_probs[i] = vocab_counter[rtg_mapping[i]]
-            unigram_probs /= sum([c for _, c in vocab_counter.items()])
+                if i in rtg_mapping:
+                    unigram_probs[i] = vocab_counter[rtg_mapping[i]]
+            unigram_probs = (unigram_probs + smoothing) / (sum([c for _, c in vocab_counter.items()]) + smoothing.sum())
             unigram_probs[wtoi[cls.unk_token]] = 1. - unigram_probs.sum().item()
 
             return cls(torch.from_numpy(corpus.astype(np.int)),
@@ -184,7 +198,7 @@ class H5CorpusLoader(object):
         for data_counter, data_index in enumerate(torch.randperm(self.sentences[which].shape[0])):
             s_start, s_end = self.sentences[which][data_index]
             ex_len = s_end - s_start
-            example = torch.zeros(ex_len + 2)
+            example = torch.zeros(ex_len + 2, dtype=torch.long).to(self.device)
             example[0] = self.wtoi[self.bos_token]
             example[-1] = self.wtoi[self.eos_token]
             example[1:-1] = self.corpus[s_start:s_end]
@@ -192,13 +206,13 @@ class H5CorpusLoader(object):
                 longest = len(example)
             batch.append(example)
             if (data_counter + 1) % bs == 0 or (data_counter + 1) == self.sentences[which].shape[0]:
-                combined_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(
-                    self.wtoi[self.pad_token]).to(self.device)
-                example_lengths = torch.zeros([len(batch)], dtype=torch.long)
-                for bi, ex in enumerate(batch):
-                    example_lengths[bi] = len(ex)
-                    combined_batch[bi, :len(ex)] = ex
-                yield combined_batch, example_lengths
+                # combined_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(
+                #     self.wtoi[self.pad_token]).to(self.device)
+                # example_lengths = torch.zeros([len(batch)], dtype=torch.long)
+                # for bi, ex in enumerate(batch):
+                #     example_lengths[bi] = len(ex)
+                #     combined_batch[bi, :len(ex)] = ex
+                yield batch, longest
                 longest = 0
                 batch.clear()
 
@@ -422,13 +436,13 @@ class PretrainingDataset(object):
                  bs: int = 32,
                  which: str = "train"):
 
-        for batch, lengths in self.src_ds(bs=bs, which=which):
-            noised_batch = batch.clone()
+        for batch, longest_clean in self.src_ds(bs=bs, which=which):
+            noised_batch = nn.utils.rnn.pad_sequence(batch, True, self.src_ds.pad_idx).to(self.device)
             clean_segments = []
             offsets_starts = []
             longest = 0
-            for bi in range(batch.shape[0]):
-                mask_len = (lengths[bi] - 2) // 2
+            for bi, example in enumerate(batch):
+                mask_len = (example.shape[0] - 2) // 2
                 if mask_len > longest:
                     longest = mask_len
                 if mask_len > 0:
@@ -437,7 +451,7 @@ class PretrainingDataset(object):
                     mask_start = 1
                     mask_len = 1
                 offsets_starts.append(mask_start)
-                clean_segments.append(batch[bi, mask_start:mask_start+mask_len])
+                clean_segments.append(example[mask_start:mask_start+mask_len])
                 actions = self.noising_probs.multinomial(mask_len, replacement=True)
                 for ai, si in enumerate(range(mask_start, mask_start+mask_len)):
                     if actions[ai] == 0:
@@ -445,16 +459,16 @@ class PretrainingDataset(object):
                     elif actions[ai] == 1:
                         noised_batch[bi, si] = self.src_ds.unigram_probs.multinomial(1).item()
 
-            segments = torch.empty([batch.shape[0], longest], dtype=torch.long).fill_(self.src_ds.wtoi[self.src_ds.pad_token]).to(self.device)
+            segments = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.src_ds.wtoi[self.src_ds.pad_token]).to(self.device)
             shifted_segments = torch.empty_like(segments).fill_(self.src_ds.wtoi[self.src_ds.mask_token]).to(self.device)
             input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
             output_key_mask = torch.zeros_like(segments).bool().to(self.device)
-            offsets = torch.zeros([batch.shape[0], longest], dtype=torch.long).to(self.device)
+            offsets = torch.zeros([len(batch), longest], dtype=torch.long).to(self.device)
             for bi, seg in enumerate(clean_segments):
                 segments[bi, :len(seg)] = seg
                 shifted_segments[bi, 1:len(seg)] = seg[:-1]
                 offsets[bi, :len(seg)] = torch.arange(offsets_starts[bi], offsets_starts[bi] + len(seg))
-                input_key_mask[bi, lengths[bi]:] = True
+                input_key_mask[bi, batch[bi].shape[0]:] = True
                 output_key_mask[bi, len(seg):] = True
 
             yield noised_batch, input_key_mask, segments, shifted_segments, output_key_mask, offsets
@@ -463,7 +477,7 @@ class PretrainingDataset(object):
 class DirectNoiseDataset(object):
 
     def __init__(self,
-                 src_ds: CorpusLoader,
+                 src_ds: H5CorpusLoader,
                  mask_prob: float = 0.5,
                  del_prob: float = 0.15,
                  ins_prob: float = 0.15,
@@ -478,12 +492,12 @@ class DirectNoiseDataset(object):
                  bs: int = 32,
                  which: str = "train"):
 
-        for batch, lengths in self.src_ds(bs=bs, which=which):
+        for batch, longest_clean in self.src_ds(bs=bs, which=which):
             noised_examples = []
             longest = 0
             for bi, example in enumerate(batch):
                 current_noised_example = []
-                actions = self.action_probs.multinomial(lengths[bi] - 2, replacement=True)
+                actions = self.action_probs.multinomial(example.shape[0] - 2, replacement=True)
                 current_noised_example.append(example[0])
                 for ei, a in enumerate(actions):
                     if a == 0: #mask
@@ -496,17 +510,24 @@ class DirectNoiseDataset(object):
                         current_noised_example.append(sampled_word)
                     elif a == 3: #keep
                         current_noised_example.append(example[ei+1])
-                current_noised_example.append(example[lengths[bi]-1])
+                current_noised_example.append(example[-1])
                 if len(current_noised_example) > longest:
                     longest = len(current_noised_example)
                 noised_examples.append(torch.tensor(current_noised_example, dtype=torch.long))
 
-            noised_batch = torch.empty([batch.shape[0], longest]).fill_(self.src_ds.pad_idx).to(self.device)
-            output_key_mask = torch.zeros_like(batch).bool().to(self.device)
+            noised_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+            bos_trunc = torch.empty([len(batch), longest_clean-1], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+            eos_trunc = torch.empty([len(batch), longest_clean-1], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+            output_key_mask = torch.zeros_like(eos_trunc).bool().to(self.device)
             input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
             for bi, ne in enumerate(noised_examples):
+                bos_trunc[bi, :batch[bi].shape[0]-1] = batch[bi][1:]
+                eos_trunc[bi, :batch[bi].shape[0]-1] = batch[bi][:-1]
                 noised_batch[bi, :ne.shape[0]] = ne
-                output_key_mask[bi, lengths[bi]:] = True
+                output_key_mask[bi, batch[bi].shape[0]-1:] = True
                 input_key_mask[bi, ne.shape[0]:] = True
 
-            yield noised_batch, input_key_mask, batch, output_key_mask
+            yield noised_batch, input_key_mask, eos_trunc, bos_trunc, output_key_mask
+
+    def get_num_sentences(self, which):
+        return self.src_ds.get_num_sentences(which)

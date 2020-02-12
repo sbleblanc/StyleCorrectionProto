@@ -44,6 +44,7 @@ class TransformerS2S(nn.Module):
         self.enc = nn.TransformerEncoder(tel, num_enc_layers, norm=l_norm)
         self.dec = nn.TransformerDecoder(tdl, num_dec_layers, norm=l_norm)
         self.lin = nn.Linear(emb_dim, num_emb)
+        self.emb_scale = math.sqrt(emb_dim)
 
     def _generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
