@@ -7,7 +7,7 @@ import numpy as np
 import itertools as it
 from collections import Counter
 from typing import Callable, List, Tuple, Dict
-
+import stylecorrection.utils.cython_utils as cu
 
 class H5CorpusLoader(object):
 
@@ -119,7 +119,7 @@ class H5CorpusLoader(object):
         with h5py.File(h5_fn, 'r') as h5_file:
             print('Loading in memory...', end='')
             corpus = torch.from_numpy(h5_file['corpus'][:].astype(np.int32))
-            sentences = torch.from_numpy(h5_file['sentences'][:, :].astype(np.int32))
+            sentences = torch.from_numpy(h5_file['sentences'][:, :].astype(np.int))
             global_vocab = h5_file['vocab'][:]
             splits_ds = h5_file['splits']
             valid_selector = splits_ds[use_split_id]
@@ -130,13 +130,23 @@ class H5CorpusLoader(object):
             print('DONE')
 
             print('Counting words...', end='')
-            vocab_counter = Counter()
-            for i in range(splits['train'].shape[0]):
-                if i % 100000 == 0:
-                    print(i)
-                    print(len(vocab_counter))
-                start, end = splits['train'][i]
-                vocab_counter.update(corpus[start:end].numpy())
+            vc = np.zeros(len(global_vocab), dtype=np.int32)
+            cu.count_words(corpus.numpy(), splits['train'].numpy(), vc)
+            vc = torch.from_numpy(vc)
+            vocab_counter = Counter(dict([(i, vc[i].item()) for i in range(5, vc.shape[0])]))
+            del vc
+            if vocab_topk == 0:
+                n = len(vocab_counter)
+            else:
+                n = vocab_topk
+            vocab_count = [(wi, c) for wi, c in it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n))]
+            vocab_counter = Counter(vocab_count)
+            # for i in range(splits['train'].shape[0]):
+            #     if i % 100000 == 0:
+            #         print(i)
+            #         print(len(vocab_counter))
+            #     start, end = splits['train'][i]
+            #     vocab_counter.update(corpus[start:end].numpy())
             print('DONE')
 
             print('Building vocabulary and mappings...', end='')
@@ -151,20 +161,27 @@ class H5CorpusLoader(object):
                     n = len(vocab_counter)
                 else:
                     n = vocab_topk
-                temp_vocab.extend([global_vocab[wi] for wi, _ in it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n))])
-                gtr_mapping = dict([(wi, i + 5) for i, (wi, _) in
-                                    enumerate(it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n)))])
-                rtg_mapping = dict([(i + 5, wi) for i, (wi, _) in
-                                    enumerate(it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n)))])
+                temp_vocab.extend([global_vocab[w] for w, _ in vocab_count])
+                # temp_vocab.extend([global_vocab[wi] for wi, _ in
+                #                    it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n))])
+
+                # gtr_mapping = dict([(wi, i + 5) for i, (wi, _) in enumerate(it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n)))])
+                rtg_mapping = dict([(i + 5, wi) for i, (wi, _) in enumerate(vocab_count)])
             wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
+            gtr_test = torch.empty(len(global_vocab), dtype=torch.int).fill_(wtoi[cls.unk_token])
+            for i, (wi, _) in enumerate(vocab_count):
+                gtr_test[wi] = i+5
+
             print('DONE')
 
             print('Adjusting corpus for new vocabulary...', end='')
-            for i in range(corpus.shape[0]):
-                if corpus[i].item() in gtr_mapping:
-                    corpus[i] = gtr_mapping[corpus[i].item()]
-                else:
-                    corpus[i] = wtoi[cls.unk_token]
+            cu.map_corpus(corpus.numpy(), gtr_test.numpy())
+            # for i in range(corpus.shape[0]):
+            #     corpus[i] = gtr_test[corpus[i]]
+            #     # if corpus[i].item() in gtr_mapping:
+            #     #     corpus[i] = gtr_mapping[corpus[i].item()]
+            #     # else:
+            #     #     corpus[i] = wtoi[cls.unk_token]
             print('DONE')
 
             print('Computing unigram probabilities...', end='')
@@ -176,6 +193,7 @@ class H5CorpusLoader(object):
                     unigram_probs[i] = vocab_counter[rtg_mapping[i]]
             unigram_probs = (unigram_probs + smoothing) / (sum([c for _, c in vocab_counter.items()]) + smoothing.sum())
             unigram_probs[wtoi[cls.unk_token]] = 1. - unigram_probs.sum().item()
+            print(unigram_probs[wtoi[cls.unk_token]])
             print('DONE')
 
             return cls(corpus,
