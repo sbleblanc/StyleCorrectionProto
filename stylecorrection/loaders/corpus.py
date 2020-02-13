@@ -22,15 +22,13 @@ class H5CorpusLoader(object):
                         raw_lines: List[str],
                         tokenize: Callable[[str], List[str]],
                         preprocess: Callable[[str], str]) -> List[List[str]]:
-        tok_pre_sentences = []
         for line in raw_lines:
             if preprocess:
                 pre_sentence = preprocess(line.strip())
             else:
                 pre_sentence = line.strip()
             tokenized = tokenize(pre_sentence)
-            tok_pre_sentences.append(tokenized)
-        return tok_pre_sentences
+            yield tokenized
 
     @classmethod
     def create_from_compressed(cls,
@@ -46,18 +44,18 @@ class H5CorpusLoader(object):
                  cls.bos_token,
                  cls.eos_token]
         wtoi = dict([(w, i) for i, w in enumerate(vocab)])
-        with tarfile.open(corpus_tar_gz, 'r:gz') as tar_file:
+        with tarfile.open(corpus_tar_gz, 'r:gz', ignore_zeros=True) as tar_file:
             books = tar_file.getmembers()
             if topk > 0:
                 books = books[:topk]
-            print('Counting...', end='')
+            print('Counting...')
             word_count = 0
             sent_count = 0
             for i, b in enumerate(books):
+                print('Processing {}/{} : {}'.format(i, len(books), b.name))
                 reader = io.TextIOWrapper(tar_file.extractfile(b))
                 raw_text = reader.read(None).splitlines()
-                processed_lines = cls.__process_lines(raw_text, tokenize, preprocess)
-                for l in processed_lines:
+                for l in cls.__process_lines(raw_text, tokenize, preprocess):
                     if len(l) > max_len:
                         continue
                     for w in l:
@@ -81,8 +79,7 @@ class H5CorpusLoader(object):
                     print('{:.2%}'.format(float(line)/sent_count))
                     reader = io.TextIOWrapper(tar_file.extractfile(b))
                     raw_text = reader.read(None).splitlines()
-                    processed_lines = cls.__process_lines(raw_text, tokenize, preprocess)
-                    for l in processed_lines:
+                    for l in cls.__process_lines(raw_text, tokenize, preprocess):
                         if len(l) > max_len:
                             continue
                         converted_line = [wtoi[w] for w in l]
@@ -90,7 +87,6 @@ class H5CorpusLoader(object):
                         start_len_ds[line] = (position, position+len(l))
                         position += len(l)
                         line += 1
-
 
     @classmethod
     def generate_split(cls,
@@ -121,20 +117,29 @@ class H5CorpusLoader(object):
                        smoothing_alpha: float = 0.,
                        device: str = "cpu"):
         with h5py.File(h5_fn, 'r') as h5_file:
-            corpus = h5_file['corpus'][:]
-            sentences = h5_file['sentences'][:, :]
+            print('Loading in memory...', end='')
+            corpus = torch.from_numpy(h5_file['corpus'][:].astype(np.int32))
+            sentences = torch.from_numpy(h5_file['sentences'][:, :].astype(np.int32))
             global_vocab = h5_file['vocab'][:]
             splits_ds = h5_file['splits']
             valid_selector = splits_ds[use_split_id]
 
             splits = dict()
-            splits['valid'] = torch.from_numpy(np.stack(list(it.compress(sentences, valid_selector)), axis=0).astype(np.int))
-            splits['train'] = torch.from_numpy(np.stack(list(it.compress(sentences, 1-valid_selector)), axis=0).astype(np.int))
+            splits['valid'] = sentences[valid_selector.nonzero()[0]]
+            splits['train'] = sentences[(1-valid_selector).nonzero()[0]]
+            print('DONE')
 
+            print('Counting words...', end='')
             vocab_counter = Counter()
             for i in range(splits['train'].shape[0]):
+                if i % 100000 == 0:
+                    print(i)
+                    print(len(vocab_counter))
                 start, end = splits['train'][i]
-                vocab_counter.update(corpus[start:end])
+                vocab_counter.update(corpus[start:end].numpy())
+            print('DONE')
+
+            print('Building vocabulary and mappings...', end='')
             if forced_vocab:
                 global_wtoi = dict([(w, i) for i, w in enumerate(global_vocab)])
                 temp_vocab = forced_vocab
@@ -152,13 +157,17 @@ class H5CorpusLoader(object):
                 rtg_mapping = dict([(i + 5, wi) for i, (wi, _) in
                                     enumerate(it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n)))])
             wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
+            print('DONE')
 
+            print('Adjusting corpus for new vocabulary...', end='')
             for i in range(corpus.shape[0]):
-                if corpus[i] in gtr_mapping:
-                    corpus[i] = gtr_mapping[corpus[i]]
+                if corpus[i].item() in gtr_mapping:
+                    corpus[i] = gtr_mapping[corpus[i].item()]
                 else:
                     corpus[i] = wtoi[cls.unk_token]
+            print('DONE')
 
+            print('Computing unigram probabilities...', end='')
             unigram_probs = torch.zeros(len(temp_vocab))
             smoothing = torch.empty(len(temp_vocab)).fill_(smoothing_alpha)
             smoothing[:5] = 0
@@ -167,8 +176,9 @@ class H5CorpusLoader(object):
                     unigram_probs[i] = vocab_counter[rtg_mapping[i]]
             unigram_probs = (unigram_probs + smoothing) / (sum([c for _, c in vocab_counter.items()]) + smoothing.sum())
             unigram_probs[wtoi[cls.unk_token]] = 1. - unigram_probs.sum().item()
+            print('DONE')
 
-            return cls(torch.from_numpy(corpus.astype(np.int)),
+            return cls(corpus,
                        splits,
                        temp_vocab,
                        wtoi,
@@ -192,7 +202,6 @@ class H5CorpusLoader(object):
     def __call__(self,
                  bs: int = 32,
                  which: str = 'train'):
-
         batch = []
         longest = 0
         for data_counter, data_index in enumerate(torch.randperm(self.sentences[which].shape[0])):
@@ -206,12 +215,6 @@ class H5CorpusLoader(object):
                 longest = len(example)
             batch.append(example)
             if (data_counter + 1) % bs == 0 or (data_counter + 1) == self.sentences[which].shape[0]:
-                # combined_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(
-                #     self.wtoi[self.pad_token]).to(self.device)
-                # example_lengths = torch.zeros([len(batch)], dtype=torch.long)
-                # for bi, ex in enumerate(batch):
-                #     example_lengths[bi] = len(ex)
-                #     combined_batch[bi, :len(ex)] = ex
                 yield batch, longest
                 longest = 0
                 batch.clear()

@@ -89,9 +89,9 @@ elif config['mode'] == 'pretrain':
     train_losses = []
     best_valid_loss = float('inf')
     patience_counter = 0
-    bs = config['pretraining']['bs']
+    bs = config['pretrain']['bs']
 
-    for i in range(config['pretraining']['max_epoch']):
+    for i in range(config['pretrain']['max_epoch']):
         model.train()
         for tbi, (t_enc_in, t_enc_in_key_mask, t_dec_out, t_dec_in, t_dec_in_key_mask, t_offsets) in enumerate(pds(bs=bs)):
 
@@ -125,7 +125,7 @@ elif config['mode'] == 'pretrain':
                     print('{}: Batch {}/{} : Train:{:.4f}, Valid:{:.4f}'.format(i, tbi*bs, pds.get_num_sentences('train'), train_loss_mean, valid_loss_mean))
 
                     if valid_loss_mean < best_valid_loss:
-                        save_fn = os.path.expandvars(config['pretraining']['model_save_fn'])
+                        save_fn = os.path.expandvars(config['pretrain']['model_save_fn'])
                         with open(save_fn, 'wb') as out_file:
                             torch.save(model.state_dict(), out_file)
                         patience_counter = 0
@@ -143,7 +143,7 @@ elif config['mode'] == 'pretrain':
             train_losses.append(loss.item())
             optimizer.step()
 
-        if patience_counter > config['pretraining']['valid_patience']:
+        if patience_counter > config['pretrain']['valid_patience']:
             print('Patience threshold reached')
             break
     print('DONE')
