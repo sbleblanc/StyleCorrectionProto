@@ -468,6 +468,9 @@ class PretrainingDataset(object):
                     elif actions[ai] == 1:
                         noised_batch[bi, si] = self.src_ds.unigram_probs.multinomial(1).item()
 
+            if longest == 0:
+                print('longest 0?!')
+                continue
             segments = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.src_ds.wtoi[self.src_ds.pad_token]).to(self.device)
             shifted_segments = torch.empty_like(segments).fill_(self.src_ds.wtoi[self.src_ds.mask_token]).to(self.device)
             input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
