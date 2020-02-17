@@ -150,8 +150,13 @@ class H5CorpusLoader(object):
                 temp_vocab = forced_vocab
                 wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
                 gtr_mapping = torch.empty(len(global_vocab), dtype=torch.int).fill_(wtoi[cls.unk_token])
+                diff_counter = 0
                 for i, w in enumerate(temp_vocab[5:]):
-                    gtr_mapping[global_wtoi[w]] = i + 5
+                    if w in global_wtoi:
+                        gtr_mapping[global_wtoi[w]] = i + 5
+                    else:
+                        diff_counter += 1
+                print('Forced vocab : {}/{} words not present'.format(diff_counter, len(temp_vocab) - 5))
                 # gtr_mapping = dict([(global_wtoi[w], i + 5) for i, w in enumerate(temp_vocab[5:]) if w in global_wtoi])
                 rtg_mapping = dict([(i + 5, global_wtoi[w]) for i, w in enumerate(temp_vocab[5:]) if w in global_wtoi])
             else:
