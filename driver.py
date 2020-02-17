@@ -1,6 +1,7 @@
 import argparse
 import yaml
 import os
+import h5py
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -50,14 +51,30 @@ elif config['mode'] == 'gen_split':
     )
     print('DONE')
 
+elif config['mode'] == 'vocab_dump':
+    print('Starting vocab dumping...')
+    corpus_h5_fn = os.path.expandvars(config['vocab_dump']['corpus_h5_fn'])
+    vocab_h5_fn = os.path.expandvars(config['vocab_dump']['vocab_h5_fn'])
+    cl = H5CorpusLoader.load_and_split(
+        corpus_h5_fn,
+        config['vocab_dump']['valid_split_id'],
+        config['vocab_dump']['vocab_topk'],
+        config['vocab_dump']['min_freq'],
+        device=device
+    )
+    cl.dump_vocab(vocab_h5_fn)
+    print('DONE')
+
 elif config['mode'] == 'pretrain':
     print('Starting Pretraining...')
-    h5_fn = os.path.expandvars(config['pretrain']['hd5']['h5_fn'])
+    corpus_h5_fn = os.path.expandvars(config['pretrain']['hd5']['corpus_fn'])
+    vocab_h5_fn = os.path.expandvars(config['pretrain']['hd5']['vocab_fn'])
+    with h5py.File(vocab_h5_fn, 'r') as h5_file:
+        vocab = h5_file['vocab'][:]
     cl = H5CorpusLoader.load_and_split(
-        h5_fn,
-        config['pretrain']['hd5']['valid_split_id'],
-        config['pretrain']['hd5']['vocab_topk'],
-        config['pretrain']['hd5']['min_freq'],
+        corpus_h5_fn,
+        use_split_id=config['pretrain']['hd5']['valid_split_id'],
+        forced_vocab=vocab,
         device=device
     )
     pds = PretrainingDataset(cl, device=device)
@@ -149,24 +166,34 @@ elif config['mode'] == 'pretrain':
     print('DONE')
 
 elif config['mode'] == 'finetune':
-    h5_fn_pretrain = os.path.expandvars(config['finetune']['hd5']['pretrained']['h5_fn'])
     h5_fn_finetune = os.path.expandvars(config['finetune']['hd5']['finetune']['h5_fn'])
-    cl_pretrain = H5CorpusLoader.load_and_split(
-        h5_fn_pretrain,
-        config['finetune']['hd5']['pretrained']['valid_split_id'],
-        config['finetune']['hd5']['pretrained']['vocab_topk'],
-        config['finetune']['hd5']['pretrained']['min_freq'],
-        device=device
-    )
+    vocab_h5_fn = os.path.expandvars(os.path.expandvars(config['finetune']['hd5']['vocab']['h5_fn']))
+    with h5py.File(vocab_h5_fn, 'r') as h5_file:
+        vocab = h5_file['vocab'][:]
     cl_direct_noise = H5CorpusLoader.load_and_split(
         h5_fn_finetune,
         use_split_id=config['finetune']['hd5']['finetune']['valid_split_id'],
-        forced_vocab=cl_pretrain.vocab,
+        forced_vocab=vocab,
         smoothing_alpha=config['finetune']['hd5']['finetune']['smoothing_alpha']
     )
     dnds = DirectNoiseDataset(cl_direct_noise, device=device)
+
+    # sample_enc_inputs_lst = []
+    # longest = 0
+    # for sentence in config['sample_corrections']['dirty']:
+    #     sample_enc_inputs_lst.append(cl_pretrain.encode_sentence(sentence))
+    #     if sample_enc_inputs_lst[-1].shape[0] > longest:
+    #         longest = sample_enc_inputs_lst[-1].shape[0]
+    # sample_enc_input = torch.empty([len(sample_enc_inputs_lst), longest], dtype=torch.long).fill_(cl_pretrain.mask_idx).to(device)
+    # sample_enc_mask = torch.zeros([len(sample_enc_inputs_lst), longest]).bool().to(device)
+    # for i, sample in enumerate(sample_enc_inputs_lst):
+    #     sample_enc_input[i, :sample.shape[0]] = sample
+    #     sample_enc_mask[i, sample.shape[0]:] = True
+    # sample_expected_outputs = config['sample_corrections']['clean']
+
+
     model = TransformerS2S(
-        len(cl_pretrain.vocab),
+        len(vocab),
         config['TransformerS2S']['emb_dim'],
         config['TransformerS2S']['n_head'],
         config['TransformerS2S']['ff_dim'],
@@ -179,7 +206,7 @@ elif config['mode'] == 'finetune':
 
     model_fn = os.path.expandvars(config['finetune']['pretrain_model_fn'])
     with open(model_fn, 'rb') as in_file:
-        model.load_state_dict(torch.load(in_file))
+        model.load_state_dict(torch.load(in_file, map_location=device))
 
     model.to(device)
 
@@ -199,7 +226,7 @@ elif config['mode'] == 'finetune':
     train_losses = []
     best_valid_loss = float('inf')
     patience_counter = 0
-    bs = config['pretraining']['bs']
+    bs = config['finetune']['bs']
     for i in range(config['finetune']['max_epoch']):
         model.train()
         for tbi, (t_noised_batch, t_input_key_mask, t_eos_trunc, t_bos_trunc, t_output_key_mask) in enumerate(dnds(bs=bs)):
@@ -231,6 +258,8 @@ elif config['mode'] == 'finetune':
                         print('Expected output : {}'.format(expected_output))
                         print('Predicted output: {}'.format(predicted_output))
                         print()
+
+                        out = model.encode()
 
                     train_loss_mean = torch.tensor(train_losses).mean()
                     valid_loss_mean = torch.tensor(valid_losses).mean()

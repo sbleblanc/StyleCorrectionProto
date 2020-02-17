@@ -145,32 +145,28 @@ class H5CorpusLoader(object):
             print('DONE')
 
             print('Building vocabulary and mappings...', end='')
-            if forced_vocab:
+            if forced_vocab is not None:
                 global_wtoi = dict([(w, i) for i, w in enumerate(global_vocab)])
                 temp_vocab = forced_vocab
-                gtr_mapping = dict([(global_wtoi[w], i + 5) for i, w in enumerate(temp_vocab[5:]) if w in global_wtoi])
+                wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
+                gtr_mapping = torch.empty(len(global_vocab), dtype=torch.int).fill_(wtoi[cls.unk_token])
+                for i, w in enumerate(temp_vocab[5:]):
+                    gtr_mapping[global_wtoi[w]] = i + 5
+                # gtr_mapping = dict([(global_wtoi[w], i + 5) for i, w in enumerate(temp_vocab[5:]) if w in global_wtoi])
                 rtg_mapping = dict([(i + 5, global_wtoi[w]) for i, w in enumerate(temp_vocab[5:]) if w in global_wtoi])
             else:
                 temp_vocab = list(global_vocab[:5])
-                if vocab_topk == 0:
-                    n = len(vocab_counter)
-                else:
-                    n = vocab_topk
                 temp_vocab.extend([global_vocab[w] for w, _ in top_vocab_count])
-                # temp_vocab.extend([global_vocab[wi] for wi, _ in
-                #                    it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n))])
-
-                # gtr_mapping = dict([(wi, i + 5) for i, (wi, _) in enumerate(it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n)))])
+                wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
+                gtr_mapping = torch.empty(len(global_vocab), dtype=torch.int).fill_(wtoi[cls.unk_token])
+                for i, (wi, _) in enumerate(top_vocab_count):
+                    gtr_mapping[wi] = i + 5
                 rtg_mapping = dict([(i + 5, wi) for i, (wi, _) in enumerate(top_vocab_count)])
-            wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
-            gtr_test = torch.empty(len(global_vocab), dtype=torch.int).fill_(wtoi[cls.unk_token])
-            for i, (wi, _) in enumerate(top_vocab_count):
-                gtr_test[wi] = i+5
 
             print('DONE')
 
             print('Adjusting corpus for new vocabulary...', end='')
-            cu.map_corpus(corpus.numpy(), gtr_test.numpy())
+            cu.map_corpus(corpus.numpy(), gtr_mapping.numpy())
             print('DONE')
 
             print('Computing unigram probabilities...', end='')
@@ -204,6 +200,14 @@ class H5CorpusLoader(object):
         self.wtoi = wtoi
         self.unigram_probs = unigram_probs
         self.device = device
+
+    def dump_vocab(self, vocab_fn: str):
+        with h5py.File(vocab_fn, 'w') as h5_file:
+            dt = h5py.string_dtype(encoding='utf-8')
+            vocab_ds = h5_file.create_dataset('vocab', (len(self.vocab),), dtype=dt)
+            prob_ds = h5_file.create_dataset('unigram_prob', (len(self.vocab),), dtype=np.float)
+            vocab_ds[:] = self.vocab
+            prob_ds[:] = self.unigram_probs
 
     def __call__(self,
                  bs: int = 32,
@@ -246,7 +250,13 @@ class H5CorpusLoader(object):
 
     def encode_sentence(self,
                         sentence: str):
-        encoded = [self.bos_idx] + [self.wtoi[w] for w in sentence.split(' ')] + [self.eos_idx]
+        encoded = [self.bos_idx]
+        for w in sentence.split(' '):
+            if w in self.wtoi:
+                encoded.append(self.wtoi[w])
+            else:
+                encoded.append(self.wtoi[self.unk_token])
+        encoded.append(self.eos_idx)
         return torch.tensor(encoded, dtype=torch.long, requires_grad=False)
 
     def decode_tensor(self, t: torch.Tensor) -> List[str]:
