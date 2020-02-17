@@ -259,8 +259,6 @@ elif config['mode'] == 'finetune':
                         print('Predicted output: {}'.format(predicted_output))
                         print()
 
-                        out = model.encode()
-
                     train_loss_mean = torch.tensor(train_losses).mean()
                     valid_loss_mean = torch.tensor(valid_losses).mean()
                     print('{}: Batch {}/{} : Train:{:.4f}, Valid:{:.4f}'.format(i, tbi * bs,
