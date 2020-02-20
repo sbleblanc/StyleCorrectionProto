@@ -558,3 +558,67 @@ class DirectNoiseDataset(object):
 
     def get_num_sentences(self, which):
         return self.src_ds.get_num_sentences(which)
+
+class CANoiseDataset(object):
+
+    def __init__(self,
+                 src_ds: H5CorpusLoader,
+                 replace_prob: float = 0.1,
+                 del_prob: float = 0.1,
+                 ins_prob: float = 0.1,
+                 keep_prob: float = 0.7,
+                 sigma: float = 0.5,
+                 device: str = "cpu"):
+        self.src_ds = src_ds
+        self.action_probs = torch.tensor([replace_prob, del_prob, ins_prob, keep_prob]).to(device)
+        self.sigma = sigma
+        assert self.action_probs.sum().allclose(torch.tensor(1.))
+        self.device = device
+
+    def __call__(self,
+                 bs: int = 32,
+                 which: str = "train"):
+
+        for batch, longest_clean in self.src_ds(bs=bs, which=which):
+            noised_examples = []
+            longest = 0
+            for bi, example in enumerate(batch):
+                current_noised_example = []
+                actions = self.action_probs.multinomial(example.shape[0] - 2, replacement=True)
+                for ei, a in enumerate(actions):
+                    if a == 0: #replace
+                        current_noised_example.append(self.src_ds.unigram_probs.multinomial(1).item())
+                    elif a == 1: #del
+                        continue
+                    elif a == 2: #insert
+                        current_noised_example.append(example[ei+1])
+                        sampled_word = self.src_ds.unigram_probs.multinomial(1).item()
+                        current_noised_example.append(sampled_word)
+                    elif a == 3: #keep
+                        current_noised_example.append(example[ei+1])
+                ne = torch.zeros(len(current_noised_example) + 2, dtype=torch.long)
+                current_noised_example = torch.tensor(current_noised_example, dtype=torch.long)
+                ne[0] = example[0]
+                ne[-1] = example[-1]
+                shuffled_indexes = np.array([i + np.random.normal(loc=0, scale=self.sigma) for i in range(len(current_noised_example))]).argsort()
+                ne[1:-1] = current_noised_example[shuffled_indexes]
+                if ne.shape[0] > longest:
+                    longest = ne.shape[0]
+                noised_examples.append(ne)
+
+            noised_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+            bos_trunc = torch.empty([len(batch), longest_clean-1], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+            eos_trunc = torch.empty([len(batch), longest_clean-1], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+            output_key_mask = torch.zeros_like(eos_trunc).bool().to(self.device)
+            input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
+            for bi, ne in enumerate(noised_examples):
+                bos_trunc[bi, :batch[bi].shape[0]-1] = batch[bi][1:]
+                eos_trunc[bi, :batch[bi].shape[0]-1] = batch[bi][:-1]
+                noised_batch[bi, :ne.shape[0]] = ne
+                output_key_mask[bi, batch[bi].shape[0]-1:] = True
+                input_key_mask[bi, ne.shape[0]:] = True
+
+            yield noised_batch, input_key_mask, eos_trunc, bos_trunc, output_key_mask
+
+    def get_num_sentences(self, which):
+        return self.src_ds.get_num_sentences(which)
