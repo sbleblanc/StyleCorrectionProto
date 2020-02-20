@@ -5,22 +5,10 @@ import h5py
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from stylecorrection.loaders.corpus import  PretrainingDataset, H5CorpusLoader, DirectNoiseDataset
+from stylecorrection.loaders.corpus import *
 from stylecorrection.models.transformer import TransformerS2S
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
-
-# test_sentence = cl.encode_sentence('kyle martino <mask> born <mask> <mask> the <mask> <mask> in atlanta , georgia .')
-#
-# res = model.beam_decode(
-#     test_sentence,
-#     torch.tensor([cl.mask_idx], dtype=torch.long),
-#     beam_width=5,
-#     max_len=7,
-#     position_offset=3
-# )
-#
-# cl.decode_tensor(torch.tensor(res, dtype=torch.long))
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-c', '--config', required=True)
@@ -36,7 +24,7 @@ if config['mode'] == 'hd5_gen':
         h5_fn,
         os.path.expandvars(config['hd5_gen']['corpus_tar_gz']),
         lambda x: x.strip().split(' '),
-        None,
+        lambda x: x.lower(),
         config['hd5_gen']['topk'],
         config['hd5_gen']['max_len']
     )
