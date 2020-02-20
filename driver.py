@@ -10,24 +10,51 @@ from stylecorrection.models.transformer import TransformerS2S
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-# test_sentence = cl.encode_sentence('kyle martino <mask> born <mask> <mask> the <mask> <mask> in atlanta , georgia .')
-#
-# res = model.beam_decode(
-#     test_sentence,
-#     torch.tensor([cl.mask_idx], dtype=torch.long),
-#     beam_width=5,
-#     max_len=7,
-#     position_offset=3
-# )
-#
-# cl.decode_tensor(torch.tensor(res, dtype=torch.long))
-
 parser = argparse.ArgumentParser()
 parser.add_argument('-c', '--config', required=True)
 params = parser.parse_args()
 
 with open(params.config, 'r') as in_file:
     config = yaml.load(in_file, Loader=yaml.FullLoader)
+
+with h5py.File('temp/models/bcu_enwiki_50k_mf2_s0_vocab.h5') as h5_file:
+    vocab = h5_file['vocab'][:]
+
+cl = H5CorpusLoader.load_and_split(
+    'temp/datasets/simple_wiki.h5',
+    use_split_id=0,
+    forced_vocab=vocab
+)
+
+
+
+model = TransformerS2S(
+    len(vocab),
+    512,
+    8,
+    4096,
+    6,
+    6
+)
+
+with open('temp/models/bcu_enwiki_dn_simple_wiki_ft.pkl', 'rb') as in_file:
+    model.load_state_dict(torch.load(in_file, map_location=device))
+
+model.eval()
+
+for ds, cs in zip(config['sample_corrections']['dirty'] + ["i hope to hear from you soon ."], config['sample_corrections']['clean']+ ["i hope to hear from you soon ."]):
+    test_sentence = cl.encode_sentence(ds)
+
+    with torch.no_grad():
+        res = model.beam_decode(
+            test_sentence,
+            torch.tensor([cl.bos_idx], dtype=torch.long),
+            beam_width=5,
+            max_len=len(test_sentence)+5,
+            end_token=cl.eos_idx
+        )
+
+    print('[{}] -> [{}] ({})'.format(ds, cl.decode_tensor(torch.tensor(res, dtype=torch.long)), cs))
 
 if config['mode'] == 'hd5_gen':
     print('Creating hd5 dataset...')
