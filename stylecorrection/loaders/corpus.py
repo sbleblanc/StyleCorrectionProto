@@ -9,6 +9,7 @@ from collections import Counter
 from typing import Callable, List, Tuple, Dict
 import stylecorrection.utils.cython_utils as cu
 
+
 class H5CorpusLoader(object):
 
     unk_token = "<unk>"
@@ -29,6 +30,7 @@ class H5CorpusLoader(object):
                 pre_sentence = line.strip()
             tokenized = tokenize(pre_sentence)
             yield tokenized
+
 
     @classmethod
     def create_from_compressed(cls,
@@ -64,6 +66,7 @@ class H5CorpusLoader(object):
                             vocab.append(w)
                     word_count += len(l)
                     sent_count += 1
+                print('Sentences count : {}'.format(sent_count))
             print('DONE')
 
             dt = h5py.string_dtype(encoding='utf-8')
@@ -94,8 +97,11 @@ class H5CorpusLoader(object):
                        valid_ratio: float = 0.2):
         with h5py.File(h5_fn, 'r+') as h5_file:
             valid_selector = np.zeros(h5_file['sentences'].shape[0])
-            num_valid_sentences = int(h5_file['sentences'].shape[0] * valid_ratio)
-            valid_selector[np.random.randint(0, h5_file['sentences'].shape[0], num_valid_sentences)] = 1
+            if valid_ratio < 1.0:
+                num_valid_sentences = int(h5_file['sentences'].shape[0] * valid_ratio)
+                valid_selector[np.random.randint(0, h5_file['sentences'].shape[0], num_valid_sentences)] = 1
+            else:
+                valid_selector[int(valid_ratio):] = 1
 
             if 'splits' not in h5_file:
                 dt = h5py.vlen_dtype(np.dtype('int32'))
@@ -205,6 +211,10 @@ class H5CorpusLoader(object):
         self.wtoi = wtoi
         self.unigram_probs = unigram_probs
         self.device = device
+        self.rand_generator = torch.Generator()
+
+    def set_manual_rnd_seed(self, seed: int):
+        self.rand_generator.manual_seed(seed & ((1<<63)-1))
 
     def dump_vocab(self, vocab_fn: str):
         with h5py.File(vocab_fn, 'w') as h5_file:
@@ -219,7 +229,7 @@ class H5CorpusLoader(object):
                  which: str = 'train'):
         batch = []
         longest = 0
-        for data_counter, data_index in enumerate(torch.randperm(self.sentences[which].shape[0])):
+        for data_counter, data_index in enumerate(torch.randperm(self.sentences[which].shape[0], generator=self.rand_generator)):
             s_start, s_end = self.sentences[which][data_index]
             ex_len = s_end - s_start
             example = torch.zeros(ex_len + 2, dtype=torch.long).to(self.device)
@@ -275,170 +285,6 @@ class H5CorpusLoader(object):
             decoded_sent.append(' '.join(sent))
 
         return decoded_sent
-
-class CorpusLoader(object):
-
-    def __init__(self,
-                 tokenize: Callable[[str], List[str]],
-                 topk: float = float('inf'),
-                 vocab_topk: int = 0,
-                 min_freq: int = 2,
-                 max_len: int = 256,
-                 valid_ratio: float = 0.2,
-                 preprocess: Callable[[str], str] = None,
-                 device: str = "cpu",
-                 verbose: bool = False):
-        self.tokenize = tokenize
-        self.topk = topk
-        self.min_freq = min_freq
-        self.vocab_topk = vocab_topk
-        self.max_len = max_len
-        self.valid_ratio = valid_ratio
-        self.preprocess = preprocess
-        self.device = device
-        self.verbose = verbose
-        self.unk_token = "<unk>"
-        self.mask_token = "<mask>"
-        self.pad_token = "<pad>"
-        self.bos_token = "<bos>"
-        self.eos_token = "<eos>"
-
-        self.wtoi = dict()
-        self.vocab = [self.mask_token,
-                      self.pad_token,
-                      self.unk_token,
-                      self.bos_token,
-                      self.eos_token]
-        self.special_char_offset = len(self.vocab)
-
-        self.data = {'train': [], 'valid': []}
-        self.unigram_probs = None
-
-    @property
-    def mask_idx(self):
-        return self.wtoi[self.mask_token]
-
-    @property
-    def pad_idx(self):
-        return self.wtoi[self.pad_token]
-
-    def __process_lines(self, raw_lines: List[str]) -> List[List[str]]:
-        tok_pre_sentences = []
-        for line in raw_lines:
-            if self.preprocess:
-                pre_sentence = self.preprocess(line.strip())
-            else:
-                pre_sentence = line.strip()
-            tokenized = self.tokenize(pre_sentence)
-            if len(tokenized) <= self.max_len and len(tokenized) > 1:
-                tok_pre_sentences.append(self.tokenize(pre_sentence))
-        return tok_pre_sentences
-
-    def extract_from_archive(self, corpus_tar_gz: str):
-        processed_book_sentences = []
-        with tarfile.open(corpus_tar_gz, 'r:gz') as tar_file:
-            books = tar_file.getmembers()
-            if self.topk != float('inf'):
-                selector = np.zeros(len(books))
-                chosen_books = np.random.choice(len(books), size=[self.topk], replace=False)
-                selector[chosen_books] = 1
-                books = list(it.compress(books, selector))
-            print('Processing books...', end='')
-            for i, b in enumerate(books):
-                reader = io.TextIOWrapper(tar_file.extractfile(b))
-                raw_text = reader.read(None).splitlines()
-                processed_book_sentences.extend(self.__process_lines(raw_text))
-            print('DONE')
-
-        sentences = {'train': [], 'valid': []}
-        valid_selector = np.zeros(len(processed_book_sentences))
-        num_valid_sentences = int(len(processed_book_sentences) * self.valid_ratio)
-        valid_selector[np.random.randint(0, len(processed_book_sentences), num_valid_sentences)] = 1
-        sentences['valid'] = list(it.compress(processed_book_sentences, valid_selector))
-        sentences['train'] = list(it.compress(processed_book_sentences, 1-valid_selector))
-        processed_book_sentences = None
-
-        vocab_count = Counter(it.chain(*sentences['train']))
-        if self.vocab_topk == 0:
-            n = len(vocab_count)
-        else:
-            n = self.vocab_topk
-        temp_vocab = [w for w, _ in it.takewhile(lambda x: x[1] > self.min_freq, vocab_count.most_common(n))]
-        self.vocab.extend(temp_vocab)
-        self.wtoi = dict([(w, i) for i, w in enumerate(self.vocab)])
-
-        self.unigram_probs = torch.zeros(len(self.vocab))
-        for i, w in enumerate(temp_vocab):
-            self.unigram_probs[i + self.special_char_offset] = vocab_count[w]
-        self.unigram_probs /= sum([c for _, c in vocab_count.items()])
-        self.unigram_probs[self.wtoi[self.unk_token]] = 1. - self.unigram_probs.sum().item()
-
-        vocab_set = set(self.vocab)
-
-        def fill_data(which):
-            while len(sentences[which]) > 0:
-                s = sentences[which].pop(-1)
-                converted = [self.wtoi[self.bos_token]]
-                converted.extend([self.wtoi[w] if w in vocab_set else self.wtoi[self.unk_token] for w in s])
-                converted.extend([self.wtoi[self.eos_token]])
-                self.data[which].append(torch.tensor(converted, dtype=torch.long))
-            # for s in sentences[which]:
-            #     converted = [self.wtoi[self.bos_token]]
-            #     converted.extend([self.wtoi[w] if w in vocab_set else self.wtoi[self.unk_token] for w in s])
-            #     converted.extend([self.wtoi[self.eos_token]])
-            #     self.data[which].append(torch.tensor(converted, dtype=torch.long))
-
-        print('Converting train data...', end='')
-        fill_data('train')
-        print('DONE')
-        print('Converting validation data...', end='')
-        fill_data('valid')
-        print('DONE')
-
-    def extract_from_text(self, corpus_fn: str) -> Tuple[List[List[str]], List[List[str]]]:
-        raw_lines = []
-        with open(corpus_fn, 'r') as in_file:
-            for line in in_file:
-                if len(raw_lines) > self.topk:
-                    break
-                raw_lines.append(line)
-        num_valid_lines = int(len(raw_lines) * (self.valid_split_ratio * 100) // 100)
-        processed_train_lines = self.__process_lines(raw_lines[:num_valid_lines])
-        processed_valid_lines = self.__process_lines(raw_lines[num_valid_lines:])
-        return [processed_train_lines], [processed_valid_lines]
-
-    def __call__(self,
-                 bs: int = 32,
-                 which: str = 'train'):
-        batch = []
-        longest = 0
-        for data_counter, data_index in enumerate(torch.randperm(len(self.data[which]))):
-            example = self.data[which][data_index]
-            if len(example) > longest:
-                longest = len(example)
-            batch.append(example)
-            if (data_counter + 1) % bs == 0 or (data_counter + 1) == len(self.data[which]):
-                combined_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.wtoi[self.pad_token]).to(self.device)
-                example_lengths = torch.zeros([len(batch)], dtype=torch.long)
-                for bi, ex in enumerate(batch):
-                    example_lengths[bi] = len(ex)
-                    combined_batch[bi, :len(ex)] = ex
-                yield combined_batch, example_lengths
-                longest = 0
-                batch.clear()
-
-    def decode_tensor(self, t: torch.Tensor) -> List[str]:
-        if t.dim() == 1:
-            t = t.unsqueeze(0)
-
-        decoded_sent = []
-
-        for i in range(t.shape[0]):
-            sent = [self.vocab[w.item()] for w in t[i] if self.vocab[w.item()] != self.pad_idx]
-            decoded_sent.append(' '.join(sent))
-
-        return decoded_sent
-
 
 class PretrainingDataset(object):
 
@@ -500,7 +346,6 @@ class PretrainingDataset(object):
 
             yield noised_batch, input_key_mask, segments, shifted_segments, output_key_mask, offsets
 
-
 class DirectNoiseDataset(object):
 
     def __init__(self,
@@ -558,3 +403,23 @@ class DirectNoiseDataset(object):
 
     def get_num_sentences(self, which):
         return self.src_ds.get_num_sentences(which)
+
+class ParallelTextDataset(object):
+
+    def __init__(self,
+                 left_ds: H5CorpusLoader,
+                 right_ds: H5CorpusLoader,
+                 device: str = 'cpu'):
+        self.left_ds = left_ds
+        self.right_ds = right_ds
+        self.device = device
+        common_rnd_seed = 42
+        self.left_ds.set_manual_rnd_seed(common_rnd_seed)
+        self.right_ds.set_manual_rnd_seed(common_rnd_seed)
+
+    def __call__(self,
+                 bs: int = 32,
+                 which: str = "train"):
+
+        for (batch_left, longest_left), (batch_right, longest_right) in zip(self.left_ds(bs=bs, which=which), self.left_ds(bs=bs, which=which)):
+            return batch_left, batch_right
