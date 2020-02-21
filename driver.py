@@ -17,44 +17,42 @@ params = parser.parse_args()
 with open(params.config, 'r') as in_file:
     config = yaml.load(in_file, Loader=yaml.FullLoader)
 
-with h5py.File('temp/models/bcu_enwiki_50k_mf2_s0_vocab.h5') as h5_file:
-    vocab = h5_file['vocab'][:]
+# with h5py.File('temp/models/bcu_enwiki_50k_mf2_s0_vocab.h5') as h5_file:
+#     vocab = h5_file['vocab'][:]
 
-cl = H5CorpusLoader.load_and_split(
-    'temp/datasets/simple_wiki.h5',
-    use_split_id=0,
-    forced_vocab=vocab
-)
-
-
-
-model = TransformerS2S(
-    len(vocab),
-    512,
-    8,
-    4096,
-    6,
-    6
-)
-
-with open('temp/models/bcu_enwiki_dn_simple_wiki_ft.pkl', 'rb') as in_file:
-    model.load_state_dict(torch.load(in_file, map_location=device))
-
-model.eval()
-
-for ds, cs in zip(config['sample_corrections']['dirty'] + ["i hope to hear from you soon ."], config['sample_corrections']['clean']+ ["i hope to hear from you soon ."]):
-    test_sentence = cl.encode_sentence(ds)
-
-    with torch.no_grad():
-        res = model.beam_decode(
-            test_sentence,
-            torch.tensor([cl.bos_idx], dtype=torch.long),
-            beam_width=5,
-            max_len=len(test_sentence)+5,
-            end_token=cl.eos_idx
-        )
-
-    print('[{}] -> [{}] ({})'.format(ds, cl.decode_tensor(torch.tensor(res, dtype=torch.long)), cs))
+# cl = H5CorpusLoader.load_and_split(
+#     'temp/datasets/obw.h5',
+#     use_split_id=0,
+#     forced_vocab=vocab
+# )
+#
+# model = TransformerS2S(
+#     len(vocab),
+#     512,
+#     8,
+#     4096,
+#     6,
+#     6
+# )
+#
+# with open('temp/models/bcu_enwiki_dn_obw_CA_ft.pkl', 'rb') as in_file:
+#     model.load_state_dict(torch.load(in_file, map_location=device))
+#
+# model.eval()
+#
+# for ds, cs in zip(config['sample_corrections']['dirty'] + ["it is the first time for me to come here ."], config['sample_corrections']['clean']+ ["i hope to hear from you soon ."]):
+#     test_sentence = cl.encode_sentence(ds)
+#
+#     with torch.no_grad():
+#         res = model.beam_decode(
+#             test_sentence,
+#             torch.tensor([cl.bos_idx], dtype=torch.long),
+#             beam_width=5,
+#             max_len=len(test_sentence)+5,
+#             end_token=cl.eos_idx
+#         )
+#
+#     print('[{}] -> [{}] ({})'.format(ds, cl.decode_tensor(torch.tensor(res, dtype=torch.long)), cs))
 
 if config['mode'] == 'hd5_gen':
     print('Creating hd5 dataset...')
@@ -203,7 +201,22 @@ elif config['mode'] == 'finetune':
         forced_vocab=vocab,
         smoothing_alpha=config['finetune']['hd5']['finetune']['smoothing_alpha']
     )
-    dnds = DirectNoiseDataset(cl_direct_noise, device=device)
+    if config['finetune']['dataset']['to_use'] == 'CA':
+        dnds = CANoiseDataset(cl_direct_noise,
+                              replace_prob=config['finetune']['dataset']['ca']['replace_prob'],
+                              del_prob=config['finetune']['dataset']['ca']['del_prob'],
+                              ins_prob=config['finetune']['dataset']['ca']['ins_prob'],
+                              keep_prob=config['finetune']['dataset']['ca']['keep_prob'],
+                              mask_prob=config['finetune']['dataset']['ca']['mask_prob'],
+                              sigma=config['finetune']['dataset']['ca']['sigma'],
+                              device=device)
+    else:
+        dnds = DirectNoiseDataset(cl_direct_noise,
+                                  del_prob=config['finetune']['dataset']['dn']['del_prob'],
+                                  ins_prob=config['finetune']['dataset']['dn']['ins_prob'],
+                                  keep_prob=config['finetune']['dataset']['dn']['keep_prob'],
+                                  mask_prob=config['finetune']['dataset']['dn']['mask_prob'],
+                                  device=device)
 
     # sample_enc_inputs_lst = []
     # longest = 0
