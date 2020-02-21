@@ -82,6 +82,7 @@ class TransformerS2S(nn.Module):
         encoded_input = self.encode(input, None)
 
         candidates = [(0, output_seed.tolist())]
+        final_candidates = []
         for pi in range(max_len):
             potential_candidates = []
             for prob, candidate in candidates:
@@ -96,7 +97,16 @@ class TransformerS2S(nn.Module):
             potential_candidates = sorted(potential_candidates, key=lambda x: x[0], reverse=True)
             for i in range(beam_width):
                 if potential_candidates[i][1][-1] == end_token:
-                    return potential_candidates[i][1]
-                candidates.append(potential_candidates[i])
+                    final_candidates.append(potential_candidates[i])
+                    beam_width -= 1
+                else:
+                    candidates.append(potential_candidates[i])
+            if beam_width == 0:
+                break
 
-        return candidates[0][1]
+        if beam_width > 0:
+            final_candidates.extend(candidates)
+
+        final_candidates = sorted(final_candidates, key=lambda x: x[0], reverse=True)
+
+        return final_candidates[0][1]
