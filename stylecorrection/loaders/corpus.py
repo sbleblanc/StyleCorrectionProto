@@ -510,6 +510,49 @@ class PretrainingDataset(object):
 
             yield noised_batch, input_key_mask, segments, shifted_segments, output_key_mask, offsets
 
+class BARTPretrainingDataset(object):
+
+    def __init__(self,
+                 src_ds: H5CorpusLoader,
+                 masking_ratio: float = 0.3,
+                 poisson_lambda: float = 3,
+                 device: str = "cpu"):
+        self.src_ds = src_ds
+        self.masking_ratio = masking_ratio
+        self.poisson_lambda = poisson_lambda
+        self.device = device
+
+    def get_num_sentences(self, which):
+        return self.src_ds.get_num_sentences(which)
+
+    def __call__(self,
+                 bs: int = 32,
+                 which: str = "train"):
+
+        for batch, longest_clean in self.src_ds(bs=bs, which=which):
+            clean_segments = []
+            offsets_starts = []
+            longest = 0
+            for bi, example in enumerate(batch):
+                continue
+
+            if longest == 0:
+                print('longest 0?!')
+                continue
+            segments = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.src_ds.wtoi[self.src_ds.pad_token]).to(self.device)
+            shifted_segments = torch.empty_like(segments).fill_(self.src_ds.wtoi[self.src_ds.mask_token]).to(self.device)
+            input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
+            output_key_mask = torch.zeros_like(segments).bool().to(self.device)
+            offsets = torch.zeros([len(batch), longest], dtype=torch.long).to(self.device)
+            for bi, seg in enumerate(clean_segments):
+                segments[bi, :len(seg)] = seg
+                shifted_segments[bi, 1:len(seg)] = seg[:-1]
+                offsets[bi, :len(seg)] = torch.arange(offsets_starts[bi], offsets_starts[bi] + len(seg))
+                input_key_mask[bi, batch[bi].shape[0]:] = True
+                output_key_mask[bi, len(seg):] = True
+
+            yield noised_batch, input_key_mask, segments, shifted_segments, output_key_mask, offsets
+
 class DirectNoiseDataset(object):
 
     def __init__(self,
