@@ -16,10 +16,10 @@ params = parser.parse_args()
 
 with open(params.config, 'r') as in_file:
     config = yaml.load(in_file, Loader=yaml.FullLoader)
-
+#
 # with h5py.File('temp/models/bcu_enwiki_50k_mf2_s0_vocab.h5') as h5_file:
 #     vocab = h5_file['vocab'][:]
-
+#
 # cl = H5CorpusLoader.load_and_split(
 #     'temp/datasets/obw.h5',
 #     use_split_id=0,
@@ -35,7 +35,7 @@ with open(params.config, 'r') as in_file:
 #     6
 # )
 #
-# with open('temp/models/bcu_enwiki_dn_obw_CA_ft.pkl', 'rb') as in_file:
+# with open('temp/models/bcu_enwiki_dn_obw_CA_3_ft.pkl', 'rb') as in_file:
 #     model.load_state_dict(torch.load(in_file, map_location=device))
 #
 # model.eval()
@@ -53,6 +53,8 @@ with open(params.config, 'r') as in_file:
 #         )
 #
 #     print('[{}] -> [{}] ({})'.format(ds, cl.decode_tensor(torch.tensor(res, dtype=torch.long)), cs))
+#
+# exit()
 
 if config['mode'] == 'hd5_gen':
     print('Creating hd5 dataset...')
@@ -102,7 +104,11 @@ elif config['mode'] == 'pretrain':
         forced_vocab=vocab,
         device=device
     )
-    pds = PretrainingDataset(cl, device=device)
+    if config['pretrain']['algo'] == 'bart':
+        print('Using text infilling (BART)')
+        pds = BARTPretrainingDataset(cl, device=device)
+    else:
+        pds = PretrainingDataset(cl, device=device)
 
     model = TransformerS2S(
         len(cl.vocab),

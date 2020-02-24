@@ -519,7 +519,7 @@ class BARTPretrainingDataset(object):
                  device: str = "cpu"):
         self.src_ds = src_ds
         self.masking_ratio = masking_ratio
-        self.poisson_lambda = poisson_lambda
+        self.poisson_dist = torch.distributions.Poisson(poisson_lambda)
         self.device = device
 
     def get_num_sentences(self, which):
@@ -532,26 +532,49 @@ class BARTPretrainingDataset(object):
         for batch, longest_clean in self.src_ds(bs=bs, which=which):
             clean_segments = []
             offsets_starts = []
-            longest = 0
+            longest_masked = 0
+            masked_examples = []
             for bi, example in enumerate(batch):
-                continue
+                num_mask = int((example.shape[0] - 2) * self.masking_ratio)
+                samples = self.poisson_dist.sample([example.shape[0]*2]).int()
+                cummul = samples.cumsum(0)
+                si = (cummul >= num_mask).nonzero().squeeze(1)[0]
+                samples[si] -= (cummul[si] - num_mask)
+                end_padding = samples[list(range(si, -1, -1))].cumsum(0)
+                example_idx = 1
+                masked_example_idx = 1
+                masked_example = torch.zeros([example.shape[0] - num_mask + si + 1], dtype=torch.long)
+                masked_example[[0, -1]] = example[[0, -1]]
+                if masked_example.shape[0] > longest_masked:
+                    longest_masked = masked_example.shape[0]
+                for i in range(si + 1):
+                    mask_start = torch.randint(low=example_idx, high=(example.shape[0]-end_padding[si - i]).int().item(), size=[1]).item()
+                    copy_len = mask_start - example_idx
+                    masked_example[masked_example_idx:masked_example_idx + copy_len] = example[example_idx:mask_start]
+                    masked_example[masked_example_idx+copy_len] = self.src_ds.mask_idx
+                    masked_example_idx += copy_len + 1
+                    example_idx = mask_start + samples[i]
+                masked_example[masked_example_idx:-1] = example[example_idx:-1]
+                masked_examples.append(masked_example)
 
-            if longest == 0:
+            if longest_masked == 0:
                 print('longest 0?!')
                 continue
-            segments = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.src_ds.wtoi[self.src_ds.pad_token]).to(self.device)
-            shifted_segments = torch.empty_like(segments).fill_(self.src_ds.wtoi[self.src_ds.mask_token]).to(self.device)
-            input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
-            output_key_mask = torch.zeros_like(segments).bool().to(self.device)
-            offsets = torch.zeros([len(batch), longest], dtype=torch.long).to(self.device)
-            for bi, seg in enumerate(clean_segments):
-                segments[bi, :len(seg)] = seg
-                shifted_segments[bi, 1:len(seg)] = seg[:-1]
-                offsets[bi, :len(seg)] = torch.arange(offsets_starts[bi], offsets_starts[bi] + len(seg))
-                input_key_mask[bi, batch[bi].shape[0]:] = True
-                output_key_mask[bi, len(seg):] = True
 
-            yield noised_batch, input_key_mask, segments, shifted_segments, output_key_mask, offsets
+            masked_batch = torch.empty([len(batch), longest_masked], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+            input_key_mask = torch.zeros_like(masked_batch).bool().to(self.device)
+            clean_shifted_bos = torch.empty([len(batch), longest_clean - 1], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+            output_key_mask = torch.zeros_like(clean_shifted_bos).bool().to(self.device)
+            clean_shifted_eos = torch.empty([len(batch), longest_clean - 1], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+            for bi, me in enumerate(masked_examples):
+                masked_batch[bi, :me.shape[0]] = me
+                input_key_mask[bi, me.shape[0]:] = True
+                clean_shifted_bos[bi, :batch[bi].shape[0]-1] = batch[bi][:-1]
+                clean_shifted_eos[bi, :batch[bi].shape[0]-1] = batch[bi][1:]
+                output_key_mask[bi, batch[bi].shape[0]-1:] = True
+
+            yield masked_batch, input_key_mask, clean_shifted_eos, clean_shifted_bos, output_key_mask, None
+
 
 class DirectNoiseDataset(object):
 
