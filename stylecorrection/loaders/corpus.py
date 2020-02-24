@@ -543,7 +543,7 @@ class BARTPretrainingDataset(object):
                 end_padding = samples[list(range(si, -1, -1))].cumsum(0)
                 example_idx = 1
                 masked_example_idx = 1
-                masked_example = torch.zeros([example.shape[0] - num_mask + si + 1], dtype=torch.long)
+                masked_example = torch.zeros([example.shape[0] - num_mask + si + 1], dtype=torch.long).to(self.device)
                 masked_example[[0, -1]] = example[[0, -1]]
                 if masked_example.shape[0] > longest_masked:
                     longest_masked = masked_example.shape[0]
