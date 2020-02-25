@@ -16,7 +16,7 @@ params = parser.parse_args()
 
 with open(params.config, 'r') as in_file:
     config = yaml.load(in_file, Loader=yaml.FullLoader)
-#
+
 # with h5py.File('temp/models/bcu_enwiki_50k_mf2_s0_vocab.h5') as h5_file:
 #     vocab = h5_file['vocab'][:]
 #
@@ -173,13 +173,17 @@ elif config['mode'] == 'pretrain':
                     print('{}: Batch {}/{} : Train:{:.4f}, Valid:{:.4f}'.format(i, tbi*bs, pds.get_num_sentences('train'), train_loss_mean, valid_loss_mean))
 
                     if valid_loss_mean < best_valid_loss:
-                        save_fn = os.path.expandvars(config['pretrain']['model_save_fn'])
+                        save_fn = os.path.expandvars(config['pretrain']['best_model_save_fn'])
                         with open(save_fn, 'wb') as out_file:
                             torch.save(model.state_dict(), out_file)
                         patience_counter = 0
                         best_valid_loss = valid_loss_mean
                     else:
                         patience_counter += 1
+
+                    save_fn = os.path.expandvars(config['pretrain']['current_model_save_fn'])
+                    with open(save_fn, 'wb') as out_file:
+                        torch.save(model.state_dict(), out_file)
 
                 train_losses.clear()
                 model.train()
