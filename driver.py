@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 from stylecorrection.loaders.corpus import *
 from stylecorrection.models.transformer import TransformerS2S
+# from stylecorrection.utils.evaluation import compute_scores
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -459,7 +460,7 @@ elif config['mode'] == 'finetune_streaming':
                         save_fn = os.path.expandvars(config['finetune']['best_model_save_fn'])
                         with open(save_fn, 'wb') as out_file:
                             to_save = {
-                                'current_iterating_idx': cl_direct_noise_train.current_iterating_idx,
+                                'current_iterating_idx': cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0],
                                 'current_iterating_order': cl_direct_noise_train.current_iterating_order,
                                 'state_dict': model.state_dict()
                             }
@@ -472,11 +473,11 @@ elif config['mode'] == 'finetune_streaming':
                     save_fn = os.path.expandvars(config['finetune']['current_model_save_fn'])
                     with open(save_fn, 'wb') as out_file:
                         to_save = {
-                            'current_iterating_idx': cl_direct_noise_train.current_iterating_idx,
+                            'current_iterating_idx': cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0],
                             'current_iterating_order': cl_direct_noise_train.current_iterating_order,
                             'state_dict': model.state_dict()
                         }
-                        torch.save(model.state_dict(), out_file)
+                        torch.save(to_save, out_file)
 
                 train_losses.clear()
                 model.train()
