@@ -17,7 +17,6 @@ params = parser.parse_args()
 with open(params.config, 'r') as in_file:
     config = yaml.load(in_file, Loader=yaml.FullLoader)
 
-
 # with h5py.File('temp/models/bcu_enwiki_50k_mf2_s0_vocab.h5') as h5_file:
 #     vocab = h5_file['vocab'][:]
 #
@@ -36,7 +35,7 @@ with open(params.config, 'r') as in_file:
 #     6
 # )
 #
-# with open('temp/models/bcu_enwiki_dn_obw_CA_3_ft.pkl', 'rb') as in_file:
+# with open('temp/models/current_finetune_bart.pkl', 'rb') as in_file:
 #     model.load_state_dict(torch.load(in_file, map_location=device))
 #
 # model.eval()
@@ -53,7 +52,10 @@ with open(params.config, 'r') as in_file:
 #             end_token=cl.eos_idx
 #         )
 #
-#     print('[{}] -> [{}] ({})'.format(ds, cl.decode_tensor(torch.tensor(res, dtype=torch.long)), cs))
+#     decoded = cl.decode_tensor(torch.tensor(res, dtype=torch.long))
+#     scores = compute_scores([decoded[0].split(' ')[1:-1]], [cs.split(' ')])
+#     print('[{}] -> [{}] ({})'.format(ds, decoded, cs))
+#     print(scores)
 #
 # exit()
 
@@ -383,6 +385,17 @@ elif config['mode'] == 'finetune_streaming':
         config['TransformerS2S']['num_enc_layers'],
         config['TransformerS2S']['num_dec_layers']
     )
+
+    best_model_save_fn = os.path.expandvars(config['finetune']['best_model_save_fn'])
+    if os.path.exists(best_model_save_fn):
+        with open(best_model_save_fn, 'rb') as data_file:
+            print('Loading from {}'.format(best_model_save_fn))
+            loaded_data = torch.load(data_file, map_location='cpu')
+            cl_direct_noise_train.current_iterating_idx = loaded_data['current_iterating_idx']
+            cl_direct_noise_train.current_iterating_order = loaded_data['current_iterating_order']
+            cl_direct_noise_train.generate_iterating_order = False
+            model.load_state_dict(loaded_data['state_dict'])
+
     if config['multi_gpu'] and torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
     model.to(device)
@@ -445,7 +458,12 @@ elif config['mode'] == 'finetune_streaming':
                     if valid_loss_mean < best_valid_loss:
                         save_fn = os.path.expandvars(config['finetune']['best_model_save_fn'])
                         with open(save_fn, 'wb') as out_file:
-                            torch.save(model.state_dict(), out_file)
+                            to_save = {
+                                'current_iterating_idx': cl_direct_noise_train.current_iterating_idx,
+                                'current_iterating_order': cl_direct_noise_train.current_iterating_order,
+                                'state_dict': model.state_dict()
+                            }
+                            torch.save(to_save, out_file)
                         patience_counter = 0
                         best_valid_loss = valid_loss_mean
                     else:
@@ -453,6 +471,11 @@ elif config['mode'] == 'finetune_streaming':
 
                     save_fn = os.path.expandvars(config['finetune']['current_model_save_fn'])
                     with open(save_fn, 'wb') as out_file:
+                        to_save = {
+                            'current_iterating_idx': cl_direct_noise_train.current_iterating_idx,
+                            'current_iterating_order': cl_direct_noise_train.current_iterating_order,
+                            'state_dict': model.state_dict()
+                        }
                         torch.save(model.state_dict(), out_file)
 
                 train_losses.clear()
