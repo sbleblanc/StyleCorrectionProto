@@ -559,7 +559,12 @@ class StreamingH5CorpusLoader(object):
         decoded_sent = []
 
         for i in range(t.shape[0]):
-            sent = [self.vocab[w.item()] for w in t[i] if self.vocab[w.item()] != self.pad_idx]
+            sent = []
+            for w in t[i]:
+                vocab_token = self.vocab[w.item()]
+                sent.append(vocab_token)
+                if vocab_token == self.eos_token:
+                    break
             decoded_sent.append(' '.join(sent))
 
         return decoded_sent
