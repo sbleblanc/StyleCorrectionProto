@@ -17,6 +17,7 @@ params = parser.parse_args()
 with open(params.config, 'r') as in_file:
     config = yaml.load(in_file, Loader=yaml.FullLoader)
 
+
 # with h5py.File('temp/models/bcu_enwiki_50k_mf2_s0_vocab.h5') as h5_file:
 #     vocab = h5_file['vocab'][:]
 #
@@ -318,6 +319,7 @@ elif config['mode'] == 'finetune':
                     if valid_loss_mean < best_valid_loss:
                         save_fn = os.path.expandvars(config['finetune']['model_save_fn'])
                         with open(save_fn, 'wb') as out_file:
+
                             torch.save(model.state_dict(), out_file)
                         patience_counter = 0
                         best_valid_loss = valid_loss_mean
@@ -330,6 +332,135 @@ elif config['mode'] == 'finetune':
             optimizer.zero_grad()
             out = model(t_noised_batch, t_eos_trunc, t_input_key_mask, t_output_key_mask, None)
             loss = criterion(out.contiguous().view(-1, len(cl_direct_noise.vocab)), t_bos_trunc.view(-1))
+            loss.backward()
+            train_losses.append(loss.item())
+            optimizer.step()
+
+elif config['mode'] == 'finetune_streaming':
+    h5_fn_finetune = os.path.expandvars(config['finetune']['hd5']['finetune']['h5_fn'])
+    vocab_h5_fn = os.path.expandvars(os.path.expandvars(config['finetune']['hd5']['vocab']['h5_fn']))
+    with h5py.File(vocab_h5_fn, 'r') as h5_file:
+        vocab = h5_file['vocab'][:]
+    cl_direct_noise_train, cl_direct_noise_valid = StreamingH5CorpusLoader.load_and_split(
+        h5_fn_finetune,
+        use_split_id=config['finetune']['hd5']['finetune']['valid_split_id'],
+        forced_vocab=vocab,
+        smoothing_alpha=config['finetune']['hd5']['finetune']['smoothing_alpha']
+    )
+    if config['finetune']['dataset']['to_use'] == 'ca':
+        dnds_train = StreamingCANoiseDataset(cl_direct_noise_train,
+                                             replace_prob=config['finetune']['dataset']['ca']['replace_prob'],
+                                             del_prob=config['finetune']['dataset']['ca']['del_prob'],
+                                             ins_prob=config['finetune']['dataset']['ca']['ins_prob'],
+                                             keep_prob=config['finetune']['dataset']['ca']['keep_prob'],
+                                             mask_prob=config['finetune']['dataset']['ca']['mask_prob'],
+                                             sigma=config['finetune']['dataset']['ca']['sigma'],
+                                             tokens_per_batch=config['finetune']['dataset']['ca']['tpb'],
+                                             device=device)
+        dnds_valid = StreamingCANoiseDataset(cl_direct_noise_valid,
+                                             replace_prob=config['finetune']['dataset']['ca']['replace_prob'],
+                                             del_prob=config['finetune']['dataset']['ca']['del_prob'],
+                                             ins_prob=config['finetune']['dataset']['ca']['ins_prob'],
+                                             keep_prob=config['finetune']['dataset']['ca']['keep_prob'],
+                                             mask_prob=config['finetune']['dataset']['ca']['mask_prob'],
+                                             sigma=config['finetune']['dataset']['ca']['sigma'],
+                                             tokens_per_batch=config['finetune']['dataset']['ca']['tpb'],
+                                             device=device)
+    else:
+        pass
+        # dnds = DirectNoiseDataset(cl_direct_noise,
+        #                           del_prob=config['finetune']['dataset']['dn']['del_prob'],
+        #                           ins_prob=config['finetune']['dataset']['dn']['ins_prob'],
+        #                           keep_prob=config['finetune']['dataset']['dn']['keep_prob'],
+        #                           mask_prob=config['finetune']['dataset']['dn']['mask_prob'],
+        #                           device=device)
+
+    model = TransformerS2S(
+        len(vocab),
+        config['TransformerS2S']['emb_dim'],
+        config['TransformerS2S']['n_head'],
+        config['TransformerS2S']['ff_dim'],
+        config['TransformerS2S']['num_enc_layers'],
+        config['TransformerS2S']['num_dec_layers']
+    )
+    if config['multi_gpu'] and torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model)
+    model.to(device)
+
+    model_fn = os.path.expandvars(config['finetune']['pretrain_model_fn'])
+    with open(model_fn, 'rb') as in_file:
+        model.load_state_dict(torch.load(in_file, map_location=device))
+
+    model.to(device)
+
+    if config['finetune']['optimizer'] == 'adam':
+        optimizer = optim.Adam(model.parameters(),
+                               lr=config['optimizer']['adam']['lr'],
+                               betas=(config['optimizer']['adam']['beta_1'], config['optimizer']['adam']['beta_2']),
+                               eps=config['optimizer']['adam']['eps'])
+    elif config['finetune']['optimizer'] == 'sgd':
+        optimizer = optim.SGD(model.parameters(),
+                              lr=config['optimizer']['sgd']['lr'],
+                              momentum=config['optimizer']['sgd']['momentum'],
+                              weight_decay=config['optimizer']['sgd']['weight_decay'],
+                              nesterov=config['optimizer']['sgd']['nesterov'])
+
+    criterion = nn.CrossEntropyLoss(ignore_index=cl_direct_noise_train.pad_idx).to(device)
+    train_losses = []
+    best_valid_loss = float('inf')
+    patience_counter = 0
+    for i in range(config['finetune']['max_epoch']):
+        model.train()
+        for tbi, (t_noised_batch, t_input_key_mask, t_eos_trunc, t_bos_trunc, t_output_key_mask) in enumerate(dnds_train):
+
+            if tbi % config['eval']['interval'] == 0:
+                model.eval()
+                valid_losses = []
+                with torch.no_grad():
+                    for vbi, (v_noised_batch, v_input_key_mask, v_eos_trunc, v_bos_trunc, v_output_key_mask) in enumerate(dnds_valid):
+                        out = model(v_noised_batch, v_eos_trunc, v_input_key_mask, v_output_key_mask, None)
+                        loss = criterion(out.contiguous().view(-1, len(cl_direct_noise_valid.vocab)), v_bos_trunc.view(-1))
+                        valid_losses.append(loss.item())
+                        if vbi == config['eval']['num_valid_batch']:
+                            break
+                    v_noised_batch, v_input_key_mask, v_eos_trunc, v_bos_trunc, v_output_key_mask = next(iter(dnds_valid))
+                    out = model(v_noised_batch[:1], v_eos_trunc[:1], v_input_key_mask[:1], v_output_key_mask[:1], None)
+                    if out.numel() == 0:
+                        print(v_noised_batch)
+                    else:
+                        enc_input = cl_direct_noise_valid.decode_tensor(v_noised_batch[:1])
+                        expected_output = cl_direct_noise_valid.decode_tensor(v_bos_trunc[:1])
+                        predicted_output = cl_direct_noise_valid.decode_tensor(out.argmax(dim=2))
+
+                        print()
+                        print('Noised sequence : {}'.format(enc_input))
+                        print('Expected output : {}'.format(expected_output))
+                        print('Predicted output: {}'.format(predicted_output))
+                        print()
+
+                    train_loss_mean = torch.tensor(train_losses).mean()
+                    valid_loss_mean = torch.tensor(valid_losses).mean()
+                    print('{}: Sentences Processed: {}/{}  Train:{:.4f}, Valid:{:.4f}'.format(i, cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0], len(cl_direct_noise_train), train_loss_mean, valid_loss_mean))
+
+                    if valid_loss_mean < best_valid_loss:
+                        save_fn = os.path.expandvars(config['finetune']['best_model_save_fn'])
+                        with open(save_fn, 'wb') as out_file:
+                            torch.save(model.state_dict(), out_file)
+                        patience_counter = 0
+                        best_valid_loss = valid_loss_mean
+                    else:
+                        patience_counter += 1
+
+                    save_fn = os.path.expandvars(config['finetune']['current_model_save_fn'])
+                    with open(save_fn, 'wb') as out_file:
+                        torch.save(model.state_dict(), out_file)
+
+                train_losses.clear()
+                model.train()
+
+            optimizer.zero_grad()
+            out = model(t_noised_batch, t_eos_trunc, t_input_key_mask, t_output_key_mask, None)
+            loss = criterion(out.contiguous().view(-1, len(cl_direct_noise_train.vocab)), t_bos_trunc.view(-1))
             loss.backward()
             train_losses.append(loss.item())
             optimizer.step()

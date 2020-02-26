@@ -286,43 +286,244 @@ class H5CorpusLoader(object):
 
         return decoded_sent
 
-class CorpusLoader(object):
+class StreamingH5CorpusLoader(object):
+
+    unk_token = "<unk>"
+    mask_token = "<mask>"
+    pad_token = "<pad>"
+    bos_token = "<bos>"
+    eos_token = "<eos>"
+
+    @classmethod
+    def __process_lines(cls,
+                        raw_lines: List[str],
+                        tokenize: Callable[[str], List[str]],
+                        preprocess: Callable[[str], str]) -> List[List[str]]:
+        for line in raw_lines:
+            if preprocess:
+                pre_sentence = preprocess(line.strip())
+            else:
+                pre_sentence = line.strip()
+            tokenized = tokenize(pre_sentence)
+            yield tokenized
+
+
+    @classmethod
+    def create_from_compressed(cls,
+                               h5_fn: str,
+                               corpus_tar_gz: str,
+                               tokenize: Callable[[str], List[str]],
+                               preprocess: Callable[[str], str] = None,
+                               topk: int = 0,
+                               max_len: int = 175):
+        vocab = [cls.mask_token,
+                 cls.pad_token,
+                 cls.unk_token,
+                 cls.bos_token,
+                 cls.eos_token]
+        wtoi = dict([(w, i) for i, w in enumerate(vocab)])
+        with tarfile.open(corpus_tar_gz, 'r:gz', ignore_zeros=True) as tar_file:
+            books = tar_file.getmembers()
+            if topk > 0:
+                books = books[:topk]
+            print('Counting...')
+            word_count = 0
+            sent_count = 0
+            for i, b in enumerate(books):
+                print('Processing {}/{} : {}'.format(i, len(books), b.name))
+                reader = io.TextIOWrapper(tar_file.extractfile(b))
+                raw_text = reader.read(None).splitlines()
+                for l in cls.__process_lines(raw_text, tokenize, preprocess):
+                    if len(l) > max_len:
+                        continue
+                    for w in l:
+                        if w not in wtoi:
+                            wtoi[w] = len(vocab)
+                            vocab.append(w)
+                    word_count += len(l)
+                    sent_count += 1
+                print('Sentences count : {}'.format(sent_count))
+            print('DONE')
+
+            dt = h5py.string_dtype(encoding='utf-8')
+            with h5py.File(h5_fn, 'w') as h5_file:
+                corpus_ds = h5_file.create_dataset('corpus', (word_count, ), dtype='u4')
+                start_len_ds = h5_file.create_dataset('sentences', (sent_count, 2), dtype='u4')
+                vocab_ds = h5_file.create_dataset('vocab', (len(vocab),), dtype=dt)
+                vocab_ds[:] = vocab
+
+                position = 0
+                line = 0
+                for i, b in enumerate(books):
+                    print('{:.2%}'.format(float(line)/sent_count))
+                    reader = io.TextIOWrapper(tar_file.extractfile(b))
+                    raw_text = reader.read(None).splitlines()
+                    for l in cls.__process_lines(raw_text, tokenize, preprocess):
+                        if len(l) > max_len:
+                            continue
+                        converted_line = [wtoi[w] for w in l]
+                        corpus_ds[position:position+len(l)] = converted_line
+                        start_len_ds[line] = (position, position+len(l))
+                        position += len(l)
+                        line += 1
+
+    @classmethod
+    def generate_split(cls,
+                       h5_fn: str,
+                       valid_ratio: float = 0.2):
+        with h5py.File(h5_fn, 'r+') as h5_file:
+            valid_selector = np.zeros(h5_file['sentences'].shape[0])
+            if valid_ratio < 1.0:
+                num_valid_sentences = int(h5_file['sentences'].shape[0] * valid_ratio)
+                valid_selector[np.random.randint(0, h5_file['sentences'].shape[0], num_valid_sentences)] = 1
+            else:
+                valid_selector[int(valid_ratio):] = 1
+
+            if 'splits' not in h5_file:
+                dt = h5py.vlen_dtype(np.dtype('int32'))
+                splits_ds = h5_file.create_dataset('splits', (20,), dtype=dt)
+                splits_ds.attrs['num_splits'] = 0
+            else:
+                splits_ds = h5_file['splits']
+
+            splits_ds[splits_ds.attrs['num_splits']] = valid_selector
+            splits_ds.attrs['num_splits'] += 1
+
+    @classmethod
+    def load_and_split(cls,
+                       h5_fn: str,
+                       use_split_id: int = 0,
+                       vocab_topk: int = 0,
+                       min_freq: int = 2,
+                       forced_vocab: List[str] = None,
+                       smoothing_alpha: float = 0.,
+                       device: str = "cpu"):
+        with h5py.File(h5_fn, 'r') as h5_file:
+            print('Loading in memory...', end='')
+            corpus = torch.from_numpy(h5_file['corpus'][:].astype(np.int32))
+            sentences = torch.from_numpy(h5_file['sentences'][:, :].astype(np.int))
+            global_vocab = h5_file['vocab'][:]
+            splits_ds = h5_file['splits']
+            valid_selector = splits_ds[use_split_id]
+
+            splits = dict()
+            splits['valid'] = sentences[valid_selector.nonzero()[0]]
+            splits['train'] = sentences[(1-valid_selector).nonzero()[0]]
+            print('DONE')
+
+            print('Counting words...', end='')
+            vc = np.zeros(len(global_vocab), dtype=np.int32)
+            cu.count_words(corpus.numpy(), splits['train'].numpy(), vc)
+            vc = torch.from_numpy(vc)
+            vocab_counter = Counter(dict([(i, vc[i].item()) for i in range(5, vc.shape[0])]))
+            total_count = vc.sum()
+            del vc
+            if vocab_topk == 0:
+                n = len(vocab_counter)
+            else:
+                n = vocab_topk
+            top_vocab_count = [(wi, c) for wi, c in it.takewhile(lambda x: x[1] > min_freq, vocab_counter.most_common(n))]
+            vocab_counter = Counter(dict(top_vocab_count))
+            print('DONE')
+
+            print('Building vocabulary and mappings...', end='')
+            if forced_vocab is not None:
+                global_wtoi = dict([(w, i) for i, w in enumerate(global_vocab)])
+                temp_vocab = forced_vocab
+                wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
+                gtr_mapping = torch.empty(len(global_vocab), dtype=torch.int).fill_(wtoi[cls.unk_token])
+                diff_counter = 0
+                for i, w in enumerate(temp_vocab[5:]):
+                    if w in global_wtoi:
+                        gtr_mapping[global_wtoi[w]] = i + 5
+                    else:
+                        diff_counter += 1
+                print('Forced vocab : {}/{} words not present'.format(diff_counter, len(temp_vocab) - 5))
+                # gtr_mapping = dict([(global_wtoi[w], i + 5) for i, w in enumerate(temp_vocab[5:]) if w in global_wtoi])
+                rtg_mapping = dict([(i + 5, global_wtoi[w]) for i, w in enumerate(temp_vocab[5:]) if w in global_wtoi])
+            else:
+                temp_vocab = list(global_vocab[:5])
+                temp_vocab.extend([global_vocab[w] for w, _ in top_vocab_count])
+                wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
+                gtr_mapping = torch.empty(len(global_vocab), dtype=torch.int).fill_(wtoi[cls.unk_token])
+                for i, (wi, _) in enumerate(top_vocab_count):
+                    gtr_mapping[wi] = i + 5
+                rtg_mapping = dict([(i + 5, wi) for i, (wi, _) in enumerate(top_vocab_count)])
+
+            print('DONE')
+
+            print('Adjusting corpus for new vocabulary...', end='')
+            cu.map_corpus(corpus.numpy(), gtr_mapping.numpy())
+            print('DONE')
+
+            print('Computing unigram probabilities...', end='')
+            unigram_probs = torch.zeros(len(temp_vocab))
+            smoothing = torch.empty(len(temp_vocab)).fill_(smoothing_alpha)
+            smoothing[:5] = 0
+            for i in range(5, len(temp_vocab)):
+                if i in rtg_mapping:
+                    unigram_probs[i] = vocab_counter[rtg_mapping[i]]
+            unigram_probs = (unigram_probs + smoothing) / (total_count + smoothing.sum())
+            unigram_probs[wtoi[cls.unk_token]] = 1. - unigram_probs.sum().item()
+            print('DONE')
+
+            train_ds = cls(corpus,
+                           splits['train'],
+                           temp_vocab,
+                           wtoi,
+                           unigram_probs,
+                           device)
+
+            valid_ds = cls(corpus,
+                           splits['valid'],
+                           temp_vocab,
+                           wtoi,
+                           unigram_probs,
+                           device)
+
+            return train_ds, valid_ds
 
     def __init__(self,
-                 tokenize: Callable[[str], List[str]],
-                 topk: float = float('inf'),
-                 vocab_topk: int = 0,
-                 min_freq: int = 2,
-                 max_len: int = 256,
-                 valid_ratio: float = 0.2,
-                 preprocess: Callable[[str], str] = None,
-                 device: str = "cpu",
-                 verbose: bool = False):
-        self.tokenize = tokenize
-        self.topk = topk
-        self.min_freq = min_freq
-        self.vocab_topk = vocab_topk
-        self.max_len = max_len
-        self.valid_ratio = valid_ratio
-        self.preprocess = preprocess
+                 corpus: torch.Tensor,
+                 sentences: torch.Tensor,
+                 vocab: List[str],
+                 wtoi: Dict[str, int],
+                 unigram_probs: torch.Tensor,
+                 device: str = "cpu"):
+        self.corpus = corpus
+        self.sentences = sentences
+        self.vocab = vocab
+        self.wtoi = wtoi
+        self.unigram_probs = unigram_probs
         self.device = device
-        self.verbose = verbose
-        self.unk_token = "<unk>"
-        self.mask_token = "<mask>"
-        self.pad_token = "<pad>"
-        self.bos_token = "<bos>"
-        self.eos_token = "<eos>"
+        self.current_iterating_order = None
+        self.current_iterating_idx = 0
+        self.generate_iterating_order = True
 
-        self.wtoi = dict()
-        self.vocab = [self.mask_token,
-                      self.pad_token,
-                      self.unk_token,
-                      self.bos_token,
-                      self.eos_token]
-        self.special_char_offset = len(self.vocab)
+    def dump_vocab(self, vocab_fn: str):
+        with h5py.File(vocab_fn, 'w') as h5_file:
+            dt = h5py.string_dtype(encoding='utf-8')
+            vocab_ds = h5_file.create_dataset('vocab', (len(self.vocab),), dtype=dt)
+            prob_ds = h5_file.create_dataset('unigram_prob', (len(self.vocab),), dtype=np.float)
+            vocab_ds[:] = self.vocab
+            prob_ds[:] = self.unigram_probs
 
-        self.data = {'train': [], 'valid': []}
-        self.unigram_probs = None
+    def __len__(self):
+        return self.sentences.shape[0]
+
+    def __iter__(self):
+        if self.generate_iterating_order:
+            self.current_iterating_order = torch.randperm(self.sentences.shape[0])
+        for self.current_iterating_idx in range(self.current_iterating_idx, len(self)):
+            s_start, s_end = self.sentences[self.current_iterating_idx]
+            ex_len = s_end - s_start
+            example = torch.zeros(ex_len + 2, dtype=torch.long).to(self.device)
+            example[0] = self.wtoi[self.bos_token]
+            example[-1] = self.wtoi[self.eos_token]
+            example[1:-1] = self.corpus[s_start:s_end]
+            yield example
+
+        self.generate_iterating_order = True
 
     @property
     def mask_idx(self):
@@ -332,110 +533,24 @@ class CorpusLoader(object):
     def pad_idx(self):
         return self.wtoi[self.pad_token]
 
-    def __process_lines(self, raw_lines: List[str]) -> List[List[str]]:
-        tok_pre_sentences = []
-        for line in raw_lines:
-            if self.preprocess:
-                pre_sentence = self.preprocess(line.strip())
+    @property
+    def bos_idx(self):
+        return self.wtoi[self.bos_token]
+
+    @property
+    def eos_idx(self):
+        return self.wtoi[self.eos_token]
+
+    def encode_sentence(self,
+                        sentence: str):
+        encoded = [self.bos_idx]
+        for w in sentence.split(' '):
+            if w in self.wtoi:
+                encoded.append(self.wtoi[w])
             else:
-                pre_sentence = line.strip()
-            tokenized = self.tokenize(pre_sentence)
-            if len(tokenized) <= self.max_len and len(tokenized) > 1:
-                tok_pre_sentences.append(self.tokenize(pre_sentence))
-        return tok_pre_sentences
-
-    def extract_from_archive(self, corpus_tar_gz: str):
-        processed_book_sentences = []
-        with tarfile.open(corpus_tar_gz, 'r:gz') as tar_file:
-            books = tar_file.getmembers()
-            if self.topk != float('inf'):
-                selector = np.zeros(len(books))
-                chosen_books = np.random.choice(len(books), size=[self.topk], replace=False)
-                selector[chosen_books] = 1
-                books = list(it.compress(books, selector))
-            print('Processing books...', end='')
-            for i, b in enumerate(books):
-                reader = io.TextIOWrapper(tar_file.extractfile(b))
-                raw_text = reader.read(None).splitlines()
-                processed_book_sentences.extend(self.__process_lines(raw_text))
-            print('DONE')
-
-        sentences = {'train': [], 'valid': []}
-        valid_selector = np.zeros(len(processed_book_sentences))
-        num_valid_sentences = int(len(processed_book_sentences) * self.valid_ratio)
-        valid_selector[np.random.randint(0, len(processed_book_sentences), num_valid_sentences)] = 1
-        sentences['valid'] = list(it.compress(processed_book_sentences, valid_selector))
-        sentences['train'] = list(it.compress(processed_book_sentences, 1-valid_selector))
-        processed_book_sentences = None
-
-        vocab_count = Counter(it.chain(*sentences['train']))
-        if self.vocab_topk == 0:
-            n = len(vocab_count)
-        else:
-            n = self.vocab_topk
-        temp_vocab = [w for w, _ in it.takewhile(lambda x: x[1] > self.min_freq, vocab_count.most_common(n))]
-        self.vocab.extend(temp_vocab)
-        self.wtoi = dict([(w, i) for i, w in enumerate(self.vocab)])
-
-        self.unigram_probs = torch.zeros(len(self.vocab))
-        for i, w in enumerate(temp_vocab):
-            self.unigram_probs[i + self.special_char_offset] = vocab_count[w]
-        self.unigram_probs /= sum([c for _, c in vocab_count.items()])
-        self.unigram_probs[self.wtoi[self.unk_token]] = 1. - self.unigram_probs.sum().item()
-
-        vocab_set = set(self.vocab)
-
-        def fill_data(which):
-            while len(sentences[which]) > 0:
-                s = sentences[which].pop(-1)
-                converted = [self.wtoi[self.bos_token]]
-                converted.extend([self.wtoi[w] if w in vocab_set else self.wtoi[self.unk_token] for w in s])
-                converted.extend([self.wtoi[self.eos_token]])
-                self.data[which].append(torch.tensor(converted, dtype=torch.long))
-            # for s in sentences[which]:
-            #     converted = [self.wtoi[self.bos_token]]
-            #     converted.extend([self.wtoi[w] if w in vocab_set else self.wtoi[self.unk_token] for w in s])
-            #     converted.extend([self.wtoi[self.eos_token]])
-            #     self.data[which].append(torch.tensor(converted, dtype=torch.long))
-
-        print('Converting train data...', end='')
-        fill_data('train')
-        print('DONE')
-        print('Converting validation data...', end='')
-        fill_data('valid')
-        print('DONE')
-
-    def extract_from_text(self, corpus_fn: str) -> Tuple[List[List[str]], List[List[str]]]:
-        raw_lines = []
-        with open(corpus_fn, 'r') as in_file:
-            for line in in_file:
-                if len(raw_lines) > self.topk:
-                    break
-                raw_lines.append(line)
-        num_valid_lines = int(len(raw_lines) * (self.valid_split_ratio * 100) // 100)
-        processed_train_lines = self.__process_lines(raw_lines[:num_valid_lines])
-        processed_valid_lines = self.__process_lines(raw_lines[num_valid_lines:])
-        return [processed_train_lines], [processed_valid_lines]
-
-    def __call__(self,
-                 bs: int = 32,
-                 which: str = 'train'):
-        batch = []
-        longest = 0
-        for data_counter, data_index in enumerate(torch.randperm(len(self.data[which]))):
-            example = self.data[which][data_index]
-            if len(example) > longest:
-                longest = len(example)
-            batch.append(example)
-            if (data_counter + 1) % bs == 0 or (data_counter + 1) == len(self.data[which]):
-                combined_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.wtoi[self.pad_token]).to(self.device)
-                example_lengths = torch.zeros([len(batch)], dtype=torch.long)
-                for bi, ex in enumerate(batch):
-                    example_lengths[bi] = len(ex)
-                    combined_batch[bi, :len(ex)] = ex
-                yield combined_batch, example_lengths
-                longest = 0
-                batch.clear()
+                encoded.append(self.wtoi[self.unk_token])
+        encoded.append(self.eos_idx)
+        return torch.tensor(encoded, dtype=torch.long, requires_grad=False)
 
     def decode_tensor(self, t: torch.Tensor) -> List[str]:
         if t.dim() == 1:
@@ -670,6 +785,145 @@ class CANoiseDataset(object):
         self.sigma = sigma
         assert self.action_probs.sum().allclose(torch.tensor(1.))
         self.device = device
+
+    def __call__(self,
+                 bs: int = 32,
+                 which: str = "train"):
+
+        for batch, longest_clean in self.src_ds(bs=bs, which=which):
+            noised_examples = []
+            longest = 0
+            for bi, example in enumerate(batch):
+                current_noised_example = []
+                actions = self.action_probs.multinomial(example.shape[0] - 2, replacement=True)
+                for ei, a in enumerate(actions):
+                    if a == 0: #replace
+                        current_noised_example.append(self.src_ds.unigram_probs.multinomial(1).item())
+                    elif a == 1: #del
+                        continue
+                    elif a == 2: #insert
+                        current_noised_example.append(example[ei+1])
+                        sampled_word = self.src_ds.unigram_probs.multinomial(1).item()
+                        current_noised_example.append(sampled_word)
+                    elif a == 3: #keep
+                        current_noised_example.append(example[ei+1])
+                    elif a == 4: #mask
+                        current_noised_example.append(self.src_ds.mask_idx)
+                ne = torch.zeros(len(current_noised_example) + 2, dtype=torch.long)
+                current_noised_example = torch.tensor(current_noised_example, dtype=torch.long)
+                ne[0] = example[0]
+                ne[-1] = example[-1]
+                shuffled_indexes = np.array([i + np.random.normal(loc=0, scale=self.sigma) for i in range(len(current_noised_example))]).argsort()
+                ne[1:-1] = current_noised_example[shuffled_indexes]
+                if ne.shape[0] > longest:
+                    longest = ne.shape[0]
+                noised_examples.append(ne)
+
+            noised_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+            bos_trunc = torch.empty([len(batch), longest_clean-1], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+            eos_trunc = torch.empty([len(batch), longest_clean-1], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+            output_key_mask = torch.zeros_like(eos_trunc).bool().to(self.device)
+            input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
+            for bi, ne in enumerate(noised_examples):
+                bos_trunc[bi, :batch[bi].shape[0]-1] = batch[bi][1:]
+                eos_trunc[bi, :batch[bi].shape[0]-1] = batch[bi][:-1]
+                noised_batch[bi, :ne.shape[0]] = ne
+                output_key_mask[bi, batch[bi].shape[0]-1:] = True
+                input_key_mask[bi, ne.shape[0]:] = True
+
+            yield noised_batch, input_key_mask, eos_trunc, bos_trunc, output_key_mask
+
+    def get_num_sentences(self, which):
+        return self.src_ds.get_num_sentences(which)
+
+
+class StreamingCANoiseDataset(object):
+
+    def __init__(self,
+                 src_ds: StreamingH5CorpusLoader,
+                 replace_prob: float = 0.1,
+                 del_prob: float = 0.1,
+                 ins_prob: float = 0.1,
+                 keep_prob: float = 0.3,
+                 mask_prob: float = 0.4,
+                 sigma: float = 0.5,
+                 tokens_per_batch: int = 1000,
+                 device: str = "cpu"):
+        self.src_ds = src_ds
+        self.action_probs = torch.tensor([replace_prob, del_prob, ins_prob, keep_prob, mask_prob]).to(device)
+        self.sigma = sigma
+        assert self.action_probs.sum().allclose(torch.tensor(1.))
+        self.tokens_per_batch = tokens_per_batch
+        self.device = device
+
+    def noise_example(self, example: torch.Tensor):
+        current_noised_example = []
+        actions = self.action_probs.multinomial(example.shape[0] - 2, replacement=True)
+        for ei, a in enumerate(actions):
+            if a == 0:  # replace
+                current_noised_example.append(self.src_ds.unigram_probs.multinomial(1).item())
+            elif a == 1:  # del
+                continue
+            elif a == 2:  # insert
+                current_noised_example.append(example[ei + 1])
+                sampled_word = self.src_ds.unigram_probs.multinomial(1).item()
+                current_noised_example.append(sampled_word)
+            elif a == 3:  # keep
+                current_noised_example.append(example[ei + 1])
+            elif a == 4:  # mask
+                current_noised_example.append(self.src_ds.mask_idx)
+        ne = torch.zeros(len(current_noised_example) + 2, dtype=torch.long)
+        current_noised_example = torch.tensor(current_noised_example, dtype=torch.long)
+        ne[[0, -1]] = example[[0, -1]]
+        shuffled_indexes = np.array(
+            [i + np.random.normal(loc=0, scale=self.sigma) for i in range(len(current_noised_example))]).argsort()
+        ne[1:-1] = current_noised_example[shuffled_indexes]
+        return ne
+
+    def __iter__(self):
+
+        clean_examples_iter = iter(self.src_ds)
+
+        current_batch_clean = []
+        current_batch_noised = []
+        current_longest_clean = 0
+        current_longest_noised = 0
+
+        examples_exhausted = False
+        while not examples_exhausted:
+            try:
+                example = next(clean_examples_iter)
+                noised_example = self.noise_example(example)
+            except StopIteration:
+                examples_exhausted = True
+            batch_token_count = max(current_longest_noised, noised_example.shape[0]) * (len(current_batch_noised) + 1) + max(current_longest_clean, example.shape[0]) * (len(current_batch_clean) + 1)
+            if batch_token_count > self.tokens_per_batch or examples_exhausted:
+                noised_batch = torch.empty([len(current_batch_noised), current_longest_noised], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+                bos_trunc = torch.empty([len(current_batch_clean), current_longest_clean - 1], dtype=torch.long).fill_(
+                    self.src_ds.pad_idx).to(self.device)
+                eos_trunc = torch.empty([len(current_batch_clean), current_longest_clean - 1], dtype=torch.long).fill_(
+                    self.src_ds.pad_idx).to(self.device)
+                output_key_mask = torch.zeros_like(eos_trunc).bool().to(self.device)
+                input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
+                for bi, ne in enumerate(current_batch_noised):
+                    bos_trunc[bi, :current_batch_clean[bi].shape[0] - 1] = current_batch_clean[bi][1:]
+                    eos_trunc[bi, :current_batch_clean[bi].shape[0] - 1] = current_batch_clean[bi][:-1]
+                    noised_batch[bi, :ne.shape[0]] = ne
+                    output_key_mask[bi, current_batch_clean[bi].shape[0] - 1:] = True
+                    input_key_mask[bi, ne.shape[0]:] = True
+
+                yield noised_batch, input_key_mask, eos_trunc, bos_trunc, output_key_mask
+                current_batch_clean.clear()
+                current_batch_noised.clear()
+                current_longest_clean = 0
+                current_longest_noised = 0
+
+            if example.shape[0] > current_longest_clean:
+                current_longest_clean = example.shape[0]
+            if noised_example.shape[0] > current_longest_noised:
+                current_longest_noised = noised_example.shape[0]
+            current_batch_clean.append(example)
+            current_batch_noised.append(noised_example)
 
     def __call__(self,
                  bs: int = 32,
