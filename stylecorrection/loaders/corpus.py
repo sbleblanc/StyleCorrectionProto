@@ -935,7 +935,7 @@ class StreamingBaseDataset(object):
                 dec_in_batch = torch.empty([len(current_batch_dec_in), current_longest_dec_in], dtype=torch.long).fill_(
                     self.src_ds.pad_idx).to(self.device)
                 dec_out_batch = torch.empty([len(current_batch_dec_out), current_longest_dec_out], dtype=torch.long).fill_(
-                    self.src_ds.pad_idx)
+                    self.src_ds.pad_idx).to(self.device)
                 output_key_mask = torch.zeros_like(dec_in_batch).bool().to(self.device)
                 input_key_mask = torch.zeros_like(enc_in_bacth).bool().to(self.device)
 
