@@ -630,6 +630,65 @@ class PretrainingDataset(object):
 
             yield noised_batch, input_key_mask, segments, shifted_segments, output_key_mask, offsets
 
+class MASSPretrainingDataset(object):
+
+    def __init__(self,
+                 src_ds: StreamingH5CorpusLoader,
+                 masking_prob: float = 0.8,
+                 random_prob: float = 0.1,
+                 keeping_prob: float = 0.1,
+                 tokens_per_batch: int = 1000,
+                 device: str = "cpu"):
+        self.src_ds = src_ds
+        self.noising_probs = torch.tensor([masking_prob, random_prob, keeping_prob]).to(device)
+        assert self.noising_probs.sum() == 1.
+        self.tokens_per_batch = tokens_per_batch
+        self.device = device
+
+    def __call__(self,
+                 bs: int = 32,
+                 which: str = "train"):
+
+        for batch, longest_clean in self.src_ds:
+            noised_batch = nn.utils.rnn.pad_sequence(batch, True, self.src_ds.pad_idx).to(self.device)
+            clean_segments = []
+            offsets_starts = []
+            longest = 0
+            for bi, example in enumerate(batch):
+                mask_len = (example.shape[0] - 2) // 2
+                if mask_len > longest:
+                    longest = mask_len
+                if mask_len > 0:
+                    mask_start = torch.randint(1, mask_len + 1, [1]).item()
+                else:
+                    mask_start = 1
+                    mask_len = 1
+                offsets_starts.append(mask_start)
+                clean_segments.append(example[mask_start:mask_start+mask_len])
+                actions = self.noising_probs.multinomial(mask_len, replacement=True)
+                for ai, si in enumerate(range(mask_start, mask_start+mask_len)):
+                    if actions[ai] == 0:
+                        noised_batch[bi, si] = self.src_ds.wtoi[self.src_ds.mask_token]
+                    elif actions[ai] == 1:
+                        noised_batch[bi, si] = self.src_ds.unigram_probs.multinomial(1).item()
+
+            if longest == 0:
+                print('longest 0?!')
+                continue
+            segments = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.src_ds.wtoi[self.src_ds.pad_token]).to(self.device)
+            shifted_segments = torch.empty_like(segments).fill_(self.src_ds.wtoi[self.src_ds.mask_token]).to(self.device)
+            input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
+            output_key_mask = torch.zeros_like(segments).bool().to(self.device)
+            offsets = torch.zeros([len(batch), longest], dtype=torch.long).to(self.device)
+            for bi, seg in enumerate(clean_segments):
+                segments[bi, :len(seg)] = seg
+                shifted_segments[bi, 1:len(seg)] = seg[:-1]
+                offsets[bi, :len(seg)] = torch.arange(offsets_starts[bi], offsets_starts[bi] + len(seg))
+                input_key_mask[bi, batch[bi].shape[0]:] = True
+                output_key_mask[bi, len(seg):] = True
+
+            yield noised_batch, input_key_mask, segments, shifted_segments, output_key_mask, offsets
+
 class BARTPretrainingDataset(object):
 
     def __init__(self,
@@ -841,8 +900,85 @@ class CANoiseDataset(object):
     def get_num_sentences(self, which):
         return self.src_ds.get_num_sentences(which)
 
+class StreamingBaseDataset(object):
 
-class StreamingCANoiseDataset(object):
+    def __init__(self,
+                 src_ds: StreamingH5CorpusLoader,
+                 tokens_per_batch: int = 1000,
+                 device: str = "cpu"):
+        self.src_ds = src_ds
+        self.tokens_per_batch = tokens_per_batch
+        self.device = device
+
+    def __iter__(self):
+        clean_examples_iter = iter(self.src_ds)
+
+        current_batch_dec_in = []
+        current_batch_enc_in = []
+        current_batch_dec_out = []
+        current_batch_offsets = []
+        current_longest_dec_in = 0
+        current_longest_enc_in = 0
+        current_longest_dec_out = 0
+
+        examples_exhausted = False
+        while not examples_exhausted:
+            try:
+                example = next(clean_examples_iter)
+                enc_input, dec_input, dec_output, offsets = self.process_example(example)
+            except StopIteration:
+                examples_exhausted = True
+            batch_token_count = max(current_longest_enc_in, enc_input.shape[0]) * (len(current_batch_enc_in) + 1) + max(current_longest_dec_in, dec_input.shape[0]) * (len(current_batch_enc_in) + 1)
+            if batch_token_count > self.tokens_per_batch or examples_exhausted:
+                enc_in_bacth = torch.empty([len(current_batch_enc_in), current_longest_enc_in], dtype=torch.long).fill_(
+                    self.src_ds.pad_idx).to(self.device)
+                dec_in_batch = torch.empty([len(current_batch_dec_in), current_longest_dec_in], dtype=torch.long).fill_(
+                    self.src_ds.pad_idx).to(self.device)
+                dec_out_batch = torch.empty([len(current_batch_dec_out), current_longest_dec_out], dtype=torch.long).fill_(
+                    self.src_ds.pad_idx)
+                output_key_mask = torch.zeros_like(dec_in_batch).bool().to(self.device)
+                input_key_mask = torch.zeros_like(enc_in_bacth).bool().to(self.device)
+
+                if current_batch_offsets[0] is None:
+                    offsets_batch = None
+                else:
+                    offsets_batch = torch.zeros([len(dec_in_batch), current_longest_dec_in], dtype=torch.long).to(self.device)
+
+                for bi, ne in enumerate(current_batch_enc_in):
+                    dec_in_batch[bi, :current_batch_dec_in[bi].shape[0]] = current_batch_dec_in[bi]
+                    dec_out_batch[bi, :current_batch_dec_out[bi].shape[0]] = current_batch_dec_out[bi]
+                    enc_in_bacth[bi, :ne.shape[0]] = ne
+                    output_key_mask[bi, current_batch_dec_in[bi].shape[0]:] = True
+                    input_key_mask[bi, ne.shape[0]:] = True
+                    if current_batch_offsets[bi] is not None:
+                        offsets_batch[bi, :current_batch_offsets[bi].shape[0]] = current_batch_offsets[bi]
+
+                yield enc_in_bacth, input_key_mask, dec_in_batch, dec_out_batch, output_key_mask, offsets_batch
+                current_batch_dec_in.clear()
+                current_batch_enc_in.clear()
+                current_batch_dec_out.clear()
+                current_batch_offsets.clear()
+                current_longest_dec_in = 0
+                current_longest_enc_in = 0
+                current_longest_dec_out = 0
+
+            if enc_input.shape[0] > current_longest_enc_in:
+                current_longest_enc_in = enc_input.shape[0]
+            if dec_input.shape[0] > current_longest_dec_in:
+                current_longest_dec_in = dec_input.shape[0]
+            if dec_output.shape[0] > current_longest_dec_out:
+                current_longest_dec_out = dec_output.shape[0]
+
+            current_batch_enc_in.append(enc_input)
+            current_batch_dec_in.append(dec_input)
+            current_batch_dec_out.append(dec_output)
+            current_batch_offsets.append(offsets)
+
+
+    def process_example(self, example: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        raise NotImplementedError
+
+class StreamingCANoiseDataset(StreamingBaseDataset):
 
     def __init__(self,
                  src_ds: StreamingH5CorpusLoader,
@@ -854,14 +990,12 @@ class StreamingCANoiseDataset(object):
                  sigma: float = 0.5,
                  tokens_per_batch: int = 1000,
                  device: str = "cpu"):
-        self.src_ds = src_ds
+        super(StreamingCANoiseDataset, self).__init__(src_ds, tokens_per_batch, device)
         self.action_probs = torch.tensor([replace_prob, del_prob, ins_prob, keep_prob, mask_prob]).to(device)
         self.sigma = sigma
         assert self.action_probs.sum().allclose(torch.tensor(1.))
-        self.tokens_per_batch = tokens_per_batch
-        self.device = device
 
-    def noise_example(self, example: torch.Tensor):
+    def process_example(self, example: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         current_noised_example = []
         actions = self.action_probs.multinomial(example.shape[0] - 2, replacement=True)
         for ei, a in enumerate(actions):
@@ -883,99 +1017,210 @@ class StreamingCANoiseDataset(object):
         shuffled_indexes = np.array(
             [i + np.random.normal(loc=0, scale=self.sigma) for i in range(len(current_noised_example))]).argsort()
         ne[1:-1] = current_noised_example[shuffled_indexes]
-        return ne
+        return ne, example[:-1], example[1:], None
 
-    def __iter__(self):
+class StreamingMASSPretrainingDataset(StreamingBaseDataset):
 
-        clean_examples_iter = iter(self.src_ds)
+    def __init__(self,
+                 src_ds: StreamingH5CorpusLoader,
+                 masking_prob: float = 0.8,
+                 random_prob: float = 0.1,
+                 keeping_prob: float = 0.1,
+                 tokens_per_batch: int = 1000,
+                 device: str = "cpu"):
+        super(StreamingMASSPretrainingDataset, self).__init__(src_ds, tokens_per_batch, device)
+        self.noising_probs = torch.tensor([masking_prob, random_prob, keeping_prob]).to(device)
+        assert self.noising_probs.sum() == 1.
 
-        current_batch_clean = []
-        current_batch_noised = []
-        current_longest_clean = 0
-        current_longest_noised = 0
+    def process_example(self, example: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        mask_len = (example.shape[0] - 2) // 2
+        if mask_len > 0:
+            mask_start = torch.randint(1, mask_len + 1, [1]).item()
+        else:
+            mask_start = 1
+            mask_len = 1
+        masked_example = example.clone()
+        masked_slice = example[mask_start:mask_start+mask_len]
+        shifted_masked_slice = torch.zeros_like(masked_slice)
+        shifted_masked_slice[0] = self.src_ds.mask_idx
+        shifted_masked_slice[1:] = masked_slice[:-1]
+        actions = self.noising_probs.multinomial(mask_len, replacement=True)
+        for ai, si in enumerate(range(mask_start, mask_start + mask_len)):
+            if actions[ai] == 0:
+                masked_example[si] = self.src_ds.wtoi[self.src_ds.mask_token]
+            elif actions[ai] == 1:
+                masked_example[si] = self.src_ds.unigram_probs.multinomial(1).item()
 
-        examples_exhausted = False
-        while not examples_exhausted:
-            try:
-                example = next(clean_examples_iter)
-                noised_example = self.noise_example(example)
-            except StopIteration:
-                examples_exhausted = True
-            batch_token_count = max(current_longest_noised, noised_example.shape[0]) * (len(current_batch_noised) + 1) + max(current_longest_clean, example.shape[0]) * (len(current_batch_clean) + 1)
-            if batch_token_count > self.tokens_per_batch or examples_exhausted:
-                noised_batch = torch.empty([len(current_batch_noised), current_longest_noised], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
-                bos_trunc = torch.empty([len(current_batch_clean), current_longest_clean - 1], dtype=torch.long).fill_(
-                    self.src_ds.pad_idx).to(self.device)
-                eos_trunc = torch.empty([len(current_batch_clean), current_longest_clean - 1], dtype=torch.long).fill_(
-                    self.src_ds.pad_idx).to(self.device)
-                output_key_mask = torch.zeros_like(eos_trunc).bool().to(self.device)
-                input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
-                for bi, ne in enumerate(current_batch_noised):
-                    bos_trunc[bi, :current_batch_clean[bi].shape[0] - 1] = current_batch_clean[bi][1:]
-                    eos_trunc[bi, :current_batch_clean[bi].shape[0] - 1] = current_batch_clean[bi][:-1]
-                    noised_batch[bi, :ne.shape[0]] = ne
-                    output_key_mask[bi, current_batch_clean[bi].shape[0] - 1:] = True
-                    input_key_mask[bi, ne.shape[0]:] = True
+        return masked_example, shifted_masked_slice, masked_slice, torch.arange(mask_start, mask_start+mask_len)
 
-                yield noised_batch, input_key_mask, eos_trunc, bos_trunc, output_key_mask
-                current_batch_clean.clear()
-                current_batch_noised.clear()
-                current_longest_clean = 0
-                current_longest_noised = 0
+class StreamingBARTPretrainingDataset(StreamingBaseDataset):
 
-            if example.shape[0] > current_longest_clean:
-                current_longest_clean = example.shape[0]
-            if noised_example.shape[0] > current_longest_noised:
-                current_longest_noised = noised_example.shape[0]
-            current_batch_clean.append(example)
-            current_batch_noised.append(noised_example)
+    def __init__(self,
+                 src_ds: StreamingH5CorpusLoader,
+                 masking_ratio: float = 0.3,
+                 poisson_lambda: float = 3,
+                 tokens_per_batch: int = 1000,
+                 device: str = "cpu"):
+        super(StreamingBARTPretrainingDataset, self).__init__(src_ds, tokens_per_batch, device)
+        self.masking_ratio = masking_ratio
+        self.poisson_dist = torch.distributions.Poisson(poisson_lambda)
 
-    def __call__(self,
-                 bs: int = 32,
-                 which: str = "train"):
+    def process_example(self, example: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        num_mask = int((example.shape[0] - 2) * self.masking_ratio)
+        samples = self.poisson_dist.sample([example.shape[0] * 2]).int()
+        cummul = samples.cumsum(0)
+        si = (cummul >= num_mask).nonzero().squeeze(1)[0]
+        samples[si] -= (cummul[si] - num_mask)
+        end_padding = samples[list(range(si, -1, -1))].cumsum(0)
+        example_idx = 1
+        masked_example_idx = 1
+        masked_example = torch.zeros([example.shape[0] - num_mask + si + 1], dtype=torch.long).to(self.device)
+        masked_example[[0, -1]] = example[[0, -1]]
+        for i in range(si + 1):
+            mask_start = torch.randint(low=example_idx, high=(example.shape[0] - end_padding[si - i]).int().item(),
+                                       size=[1]).item()
+            copy_len = mask_start - example_idx
+            masked_example[masked_example_idx:masked_example_idx + copy_len] = example[example_idx:mask_start]
+            masked_example[masked_example_idx + copy_len] = self.src_ds.mask_idx
+            masked_example_idx += copy_len + 1
+            example_idx = mask_start + samples[i]
+        masked_example[masked_example_idx:-1] = example[example_idx:-1]
+        return masked_example, example[:-1], example[1:], None
 
-        for batch, longest_clean in self.src_ds(bs=bs, which=which):
-            noised_examples = []
-            longest = 0
-            for bi, example in enumerate(batch):
-                current_noised_example = []
-                actions = self.action_probs.multinomial(example.shape[0] - 2, replacement=True)
-                for ei, a in enumerate(actions):
-                    if a == 0: #replace
-                        current_noised_example.append(self.src_ds.unigram_probs.multinomial(1).item())
-                    elif a == 1: #del
-                        continue
-                    elif a == 2: #insert
-                        current_noised_example.append(example[ei+1])
-                        sampled_word = self.src_ds.unigram_probs.multinomial(1).item()
-                        current_noised_example.append(sampled_word)
-                    elif a == 3: #keep
-                        current_noised_example.append(example[ei+1])
-                    elif a == 4: #mask
-                        current_noised_example.append(self.src_ds.mask_idx)
-                ne = torch.zeros(len(current_noised_example) + 2, dtype=torch.long)
-                current_noised_example = torch.tensor(current_noised_example, dtype=torch.long)
-                ne[0] = example[0]
-                ne[-1] = example[-1]
-                shuffled_indexes = np.array([i + np.random.normal(loc=0, scale=self.sigma) for i in range(len(current_noised_example))]).argsort()
-                ne[1:-1] = current_noised_example[shuffled_indexes]
-                if ne.shape[0] > longest:
-                    longest = ne.shape[0]
-                noised_examples.append(ne)
-
-            noised_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
-            bos_trunc = torch.empty([len(batch), longest_clean-1], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
-            eos_trunc = torch.empty([len(batch), longest_clean-1], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
-            output_key_mask = torch.zeros_like(eos_trunc).bool().to(self.device)
-            input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
-            for bi, ne in enumerate(noised_examples):
-                bos_trunc[bi, :batch[bi].shape[0]-1] = batch[bi][1:]
-                eos_trunc[bi, :batch[bi].shape[0]-1] = batch[bi][:-1]
-                noised_batch[bi, :ne.shape[0]] = ne
-                output_key_mask[bi, batch[bi].shape[0]-1:] = True
-                input_key_mask[bi, ne.shape[0]:] = True
-
-            yield noised_batch, input_key_mask, eos_trunc, bos_trunc, output_key_mask
-
-    def get_num_sentences(self, which):
-        return self.src_ds.get_num_sentences(which)
+# class StreamingCANoiseDataset(object):
+#
+#     def __init__(self,
+#                  src_ds: StreamingH5CorpusLoader,
+#                  replace_prob: float = 0.1,
+#                  del_prob: float = 0.1,
+#                  ins_prob: float = 0.1,
+#                  keep_prob: float = 0.3,
+#                  mask_prob: float = 0.4,
+#                  sigma: float = 0.5,
+#                  tokens_per_batch: int = 1000,
+#                  device: str = "cpu"):
+#         self.src_ds = src_ds
+#         self.action_probs = torch.tensor([replace_prob, del_prob, ins_prob, keep_prob, mask_prob]).to(device)
+#         self.sigma = sigma
+#         assert self.action_probs.sum().allclose(torch.tensor(1.))
+#         self.tokens_per_batch = tokens_per_batch
+#         self.device = device
+#
+#     def noise_example(self, example: torch.Tensor):
+#         current_noised_example = []
+#         actions = self.action_probs.multinomial(example.shape[0] - 2, replacement=True)
+#         for ei, a in enumerate(actions):
+#             if a == 0:  # replace
+#                 current_noised_example.append(self.src_ds.unigram_probs.multinomial(1).item())
+#             elif a == 1:  # del
+#                 continue
+#             elif a == 2:  # insert
+#                 current_noised_example.append(example[ei + 1])
+#                 sampled_word = self.src_ds.unigram_probs.multinomial(1).item()
+#                 current_noised_example.append(sampled_word)
+#             elif a == 3:  # keep
+#                 current_noised_example.append(example[ei + 1])
+#             elif a == 4:  # mask
+#                 current_noised_example.append(self.src_ds.mask_idx)
+#         ne = torch.zeros(len(current_noised_example) + 2, dtype=torch.long)
+#         current_noised_example = torch.tensor(current_noised_example, dtype=torch.long)
+#         ne[[0, -1]] = example[[0, -1]]
+#         shuffled_indexes = np.array(
+#             [i + np.random.normal(loc=0, scale=self.sigma) for i in range(len(current_noised_example))]).argsort()
+#         ne[1:-1] = current_noised_example[shuffled_indexes]
+#         return ne
+#
+#     def __iter__(self):
+#
+#         clean_examples_iter = iter(self.src_ds)
+#
+#         current_batch_clean = []
+#         current_batch_noised = []
+#         current_longest_clean = 0
+#         current_longest_noised = 0
+#
+#         examples_exhausted = False
+#         while not examples_exhausted:
+#             try:
+#                 example = next(clean_examples_iter)
+#                 noised_example = self.noise_example(example)
+#             except StopIteration:
+#                 examples_exhausted = True
+#             batch_token_count = max(current_longest_noised, noised_example.shape[0]) * (len(current_batch_noised) + 1) + max(current_longest_clean, example.shape[0]) * (len(current_batch_clean) + 1)
+#             if batch_token_count > self.tokens_per_batch or examples_exhausted:
+#                 noised_batch = torch.empty([len(current_batch_noised), current_longest_noised], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+#                 bos_trunc = torch.empty([len(current_batch_clean), current_longest_clean - 1], dtype=torch.long).fill_(
+#                     self.src_ds.pad_idx).to(self.device)
+#                 eos_trunc = torch.empty([len(current_batch_clean), current_longest_clean - 1], dtype=torch.long).fill_(
+#                     self.src_ds.pad_idx).to(self.device)
+#                 output_key_mask = torch.zeros_like(eos_trunc).bool().to(self.device)
+#                 input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
+#                 for bi, ne in enumerate(current_batch_noised):
+#                     bos_trunc[bi, :current_batch_clean[bi].shape[0] - 1] = current_batch_clean[bi][1:]
+#                     eos_trunc[bi, :current_batch_clean[bi].shape[0] - 1] = current_batch_clean[bi][:-1]
+#                     noised_batch[bi, :ne.shape[0]] = ne
+#                     output_key_mask[bi, current_batch_clean[bi].shape[0] - 1:] = True
+#                     input_key_mask[bi, ne.shape[0]:] = True
+#
+#                 yield noised_batch, input_key_mask, eos_trunc, bos_trunc, output_key_mask
+#                 current_batch_clean.clear()
+#                 current_batch_noised.clear()
+#                 current_longest_clean = 0
+#                 current_longest_noised = 0
+#
+#             if example.shape[0] > current_longest_clean:
+#                 current_longest_clean = example.shape[0]
+#             if noised_example.shape[0] > current_longest_noised:
+#                 current_longest_noised = noised_example.shape[0]
+#             current_batch_clean.append(example)
+#             current_batch_noised.append(noised_example)
+#
+#     def __call__(self,
+#                  bs: int = 32,
+#                  which: str = "train"):
+#
+#         for batch, longest_clean in self.src_ds(bs=bs, which=which):
+#             noised_examples = []
+#             longest = 0
+#             for bi, example in enumerate(batch):
+#                 current_noised_example = []
+#                 actions = self.action_probs.multinomial(example.shape[0] - 2, replacement=True)
+#                 for ei, a in enumerate(actions):
+#                     if a == 0: #replace
+#                         current_noised_example.append(self.src_ds.unigram_probs.multinomial(1).item())
+#                     elif a == 1: #del
+#                         continue
+#                     elif a == 2: #insert
+#                         current_noised_example.append(example[ei+1])
+#                         sampled_word = self.src_ds.unigram_probs.multinomial(1).item()
+#                         current_noised_example.append(sampled_word)
+#                     elif a == 3: #keep
+#                         current_noised_example.append(example[ei+1])
+#                     elif a == 4: #mask
+#                         current_noised_example.append(self.src_ds.mask_idx)
+#                 ne = torch.zeros(len(current_noised_example) + 2, dtype=torch.long)
+#                 current_noised_example = torch.tensor(current_noised_example, dtype=torch.long)
+#                 ne[0] = example[0]
+#                 ne[-1] = example[-1]
+#                 shuffled_indexes = np.array([i + np.random.normal(loc=0, scale=self.sigma) for i in range(len(current_noised_example))]).argsort()
+#                 ne[1:-1] = current_noised_example[shuffled_indexes]
+#                 if ne.shape[0] > longest:
+#                     longest = ne.shape[0]
+#                 noised_examples.append(ne)
+#
+#             noised_batch = torch.empty([len(batch), longest], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+#             bos_trunc = torch.empty([len(batch), longest_clean-1], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+#             eos_trunc = torch.empty([len(batch), longest_clean-1], dtype=torch.long).fill_(self.src_ds.pad_idx).to(self.device)
+#             output_key_mask = torch.zeros_like(eos_trunc).bool().to(self.device)
+#             input_key_mask = torch.zeros_like(noised_batch).bool().to(self.device)
+#             for bi, ne in enumerate(noised_examples):
+#                 bos_trunc[bi, :batch[bi].shape[0]-1] = batch[bi][1:]
+#                 eos_trunc[bi, :batch[bi].shape[0]-1] = batch[bi][:-1]
+#                 noised_batch[bi, :ne.shape[0]] = ne
+#                 output_key_mask[bi, batch[bi].shape[0]-1:] = True
+#                 input_key_mask[bi, ne.shape[0]:] = True
+#
+#             yield noised_batch, input_key_mask, eos_trunc, bos_trunc, output_key_mask
+#
+#     def get_num_sentences(self, which):
+#         return self.src_ds.get_num_sentences(which)
