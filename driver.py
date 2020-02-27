@@ -394,7 +394,7 @@ elif config['mode'] == 'pretrain_streaming':
             cl_train.current_iterating_order = loaded_data['current_iterating_order']
             cl_train.generate_iterating_order = False
             model.load_state_dict(loaded_data['model_state_dict'])
-            optimizer.load_state_dict(loaded_data['optimizer_state_dict'])
+            optimizer.load_state_dict(loaded_data['optim_state_dict'])
 
     if config['multi_gpu'] and torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
