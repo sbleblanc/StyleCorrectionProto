@@ -953,7 +953,7 @@ class StreamingBaseDataset(object):
                     if current_batch_offsets[bi] is not None:
                         offsets_batch[bi, :current_batch_offsets[bi].shape[0]] = current_batch_offsets[bi]
 
-                yield enc_in_bacth, input_key_mask, dec_in_batch, dec_out_batch, output_key_mask, offsets_batch
+                yield enc_in_bacth, input_key_mask, dec_out_batch, dec_in_batch, output_key_mask, offsets_batch
                 current_batch_dec_in.clear()
                 current_batch_enc_in.clear()
                 current_batch_dec_out.clear()
