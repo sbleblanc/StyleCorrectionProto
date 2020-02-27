@@ -428,8 +428,8 @@ elif config['mode'] == 'pretrain_streaming':
                     if out.numel() == 0:
                         print(v_enc_in)
                     else:
-                        enc_input = cl_train.decode_tensor(v_enc_in)
-                        expected_output = cl_train.decode_tensor(v_dec_out)
+                        enc_input = cl_train.decode_tensor(v_enc_in[:1])
+                        expected_output = cl_train.decode_tensor(v_dec_out[:1])
                         predicted_output = cl_train.decode_tensor(out.argmax(dim=2))
 
                         print()
