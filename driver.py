@@ -361,7 +361,7 @@ elif config['mode'] == 'pretrain_streaming':
         pds_valid = StreamingMASSPretrainingDataset(cl_train, tokens_per_batch=config['pretrain']['tpb'], device=device)
 
     model = TransformerS2S(
-        len(cl.vocab),
+        len(cl_train.vocab),
         config['TransformerS2S']['emb_dim'],
         config['TransformerS2S']['n_head'],
         config['TransformerS2S']['ff_dim'],
