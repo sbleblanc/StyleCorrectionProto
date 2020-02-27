@@ -346,7 +346,7 @@ elif config['mode'] == 'pretrain_streaming':
     vocab_h5_fn = os.path.expandvars(config['pretrain']['hd5']['vocab_fn'])
     with h5py.File(vocab_h5_fn, 'r') as h5_file:
         vocab = h5_file['vocab'][:]
-    cl_train, cl_test = StreamingH5CorpusLoader.load_and_split(
+    cl_train, cl_valid = StreamingH5CorpusLoader.load_and_split(
         corpus_h5_fn,
         use_split_id=config['pretrain']['hd5']['valid_split_id'],
         forced_vocab=vocab,
@@ -355,10 +355,10 @@ elif config['mode'] == 'pretrain_streaming':
     if config['pretrain']['algo'] == 'bart':
         print('Using text infilling (BART)')
         pds_train = StreamingBARTPretrainingDataset(cl_train, tokens_per_batch=config['pretrain']['tpb'], device=device)
-        pds_valid = StreamingBARTPretrainingDataset(cl_test, tokens_per_batch=config['pretrain']['tpb'], device=device)
+        pds_valid = StreamingBARTPretrainingDataset(cl_valid, tokens_per_batch=config['pretrain']['tpb'], device=device)
     else:
         pds_train = StreamingMASSPretrainingDataset(cl_train, tokens_per_batch=config['pretrain']['tpb'], device=device)
-        pds_valid = StreamingMASSPretrainingDataset(cl_train, tokens_per_batch=config['pretrain']['tpb'], device=device)
+        pds_valid = StreamingMASSPretrainingDataset(cl_valid, tokens_per_batch=config['pretrain']['tpb'], device=device)
 
     model = TransformerS2S(
         len(cl_train.vocab),
@@ -416,7 +416,7 @@ elif config['mode'] == 'pretrain_streaming':
                 with torch.no_grad():
                     for vbi, (v_enc_in, v_enc_in_key_mask, v_dec_out, v_dec_in, v_dec_in_key_mask, v_offsets) in enumerate(pds_valid):
                         out = model(v_enc_in, v_dec_in, v_enc_in_key_mask, v_dec_in_key_mask, v_offsets)
-                        loss = criterion(out.contiguous().view(-1, len(cl.vocab)), v_dec_out.view(-1))
+                        loss = criterion(out.contiguous().view(-1, len(cl_valid.vocab)), v_dec_out.view(-1))
                         valid_losses.append(loss.item())
                         if vbi == config['eval']['num_valid_batch']:
                             break
@@ -472,7 +472,7 @@ elif config['mode'] == 'pretrain_streaming':
 
             optimizer.zero_grad()
             out = model(t_enc_in, t_dec_in, t_enc_in_key_mask, t_dec_in_key_mask, t_offsets)
-            loss = criterion(out.contiguous().view(-1, len(cl.vocab)), t_dec_out.view(-1))
+            loss = criterion(out.contiguous().view(-1, len(cl_train.vocab)), t_dec_out.view(-1))
             loss.backward()
             train_losses.append(loss.item())
             optimizer.step()
