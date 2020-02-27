@@ -400,12 +400,11 @@ elif config['mode'] == 'pretrain_streaming':
         model = nn.DataParallel(model)
     model.to(device)
 
-    criterion = nn.CrossEntropyLoss(ignore_index=cl.pad_idx).to(device)
+    criterion = nn.CrossEntropyLoss(ignore_index=cl_train.pad_idx).to(device)
 
     train_losses = []
     best_valid_loss = float('inf')
     patience_counter = 0
-    bs = config['pretrain']['bs']
 
     for i in range(config['pretrain']['max_epoch']):
         model.train()
