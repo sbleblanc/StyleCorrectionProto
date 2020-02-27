@@ -369,6 +369,9 @@ elif config['mode'] == 'pretrain_streaming':
         config['TransformerS2S']['num_dec_layers']
     )
 
+    if config['multi_gpu'] and torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model)
+    model.to(device)
 
     if config['pretrain']['optimizer'] == 'adam':
         optimizer = optim.Adam(model.parameters(),
@@ -396,9 +399,6 @@ elif config['mode'] == 'pretrain_streaming':
             model.load_state_dict(loaded_data['model_state_dict'])
             optimizer.load_state_dict(loaded_data['optim_state_dict'])
 
-    if config['multi_gpu'] and torch.cuda.device_count() > 1:
-        model = nn.DataParallel(model)
-    model.to(device)
 
     criterion = nn.CrossEntropyLoss(ignore_index=cl_train.pad_idx).to(device)
 
@@ -530,6 +530,10 @@ elif config['mode'] == 'finetune_streaming':
         config['TransformerS2S']['num_dec_layers']
     )
 
+    if config['multi_gpu'] and torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model)
+    model.to(device)
+
     if config['finetune']['optimizer'] == 'adam':
         optimizer = optim.Adam(model.parameters(),
                                lr=config['optimizer']['adam']['lr'],
@@ -556,10 +560,6 @@ elif config['mode'] == 'finetune_streaming':
             model.load_state_dict(loaded_data['model_state_dict'])
             optimizer.load_state_dict(loaded_data['optimizer_state_dict'])
 
-
-    if config['multi_gpu'] and torch.cuda.device_count() > 1:
-        model = nn.DataParallel(model)
-    model.to(device)
 
     model_fn = os.path.expandvars(config['finetune']['pretrain_model_fn'])
     with open(model_fn, 'rb') as in_file:
