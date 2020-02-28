@@ -516,7 +516,7 @@ class StreamingH5CorpusLoader(object):
             self.current_iterating_idx = 0
             self.current_iterating_order = torch.randperm(self.sentences.shape[0])
         for self.current_iterating_idx in range(self.current_iterating_idx, len(self)):
-            s_start, s_end = self.sentences[self.current_iterating_idx]
+            s_start, s_end = self.sentences[self.current_iterating_order[self.current_iterating_idx]]
             ex_len = s_end - s_start
             example = torch.zeros(ex_len + 2, dtype=torch.long).to(self.device)
             example[0] = self.wtoi[self.bos_token]
