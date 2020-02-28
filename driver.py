@@ -572,19 +572,19 @@ elif config['mode'] == 'finetune_streaming':
     patience_counter = 0
     for i in range(config['finetune']['max_epoch']):
         model.train()
-        for tbi, (t_noised_batch, t_input_key_mask, t_eos_trunc, t_bos_trunc, t_output_key_mask, t_offsets) in enumerate(dnds_train):
+        for tbi, (t_noised_batch, t_input_key_mask, t_bos_trunc, t_eos_trunc, t_output_key_mask, t_offsets) in enumerate(dnds_train):
 
             if tbi % config['eval']['interval'] == 0:
                 model.eval()
                 valid_losses = []
                 with torch.no_grad():
-                    for vbi, (v_noised_batch, v_input_key_mask, v_eos_trunc, v_bos_trunc, v_output_key_mask, v_offsets) in enumerate(dnds_valid):
+                    for vbi, (v_noised_batch, v_input_key_mask, v_bos_trunc, v_eos_trunc, v_output_key_mask, v_offsets) in enumerate(dnds_valid):
                         out = model(v_noised_batch, v_eos_trunc, v_input_key_mask, v_output_key_mask, None)
                         loss = criterion(out.contiguous().view(-1, len(cl_direct_noise_valid.vocab)), v_bos_trunc.view(-1))
                         valid_losses.append(loss.item())
                         if vbi == config['eval']['num_valid_batch']:
                             break
-                    v_noised_batch, v_input_key_mask, v_eos_trunc, v_bos_trunc, v_output_key_mask, v_offsets = next(iter(dnds_valid))
+                    v_noised_batch, v_input_key_mask, v_bos_trunc, v_eos_trunc, v_output_key_mask, v_offsets = next(iter(dnds_valid))
                     out = model(v_noised_batch[:1], v_eos_trunc[:1], v_input_key_mask[:1], v_output_key_mask[:1], None)
                     if out.numel() == 0:
                         print(v_noised_batch)
