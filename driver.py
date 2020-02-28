@@ -560,12 +560,11 @@ elif config['mode'] == 'finetune_streaming':
             model.load_state_dict(loaded_data['model_state_dict'])
             optimizer.load_state_dict(loaded_data['optim_state_dict'])
 
-
     model_fn = os.path.expandvars(config['finetune']['pretrain_model_fn'])
     with open(model_fn, 'rb') as in_file:
-        model.load_state_dict(torch.load(in_file, map_location=device))
-
-    model.to(device)
+        loaded_data = torch.load(in_file, map_location=device)
+        model.load_state_dict(loaded_data['model_state_dict'])
+        loaded_data = None
 
     criterion = nn.CrossEntropyLoss(ignore_index=cl_direct_noise_train.pad_idx).to(device)
     train_losses = []
