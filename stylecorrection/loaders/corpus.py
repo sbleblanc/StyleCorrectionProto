@@ -513,6 +513,7 @@ class StreamingH5CorpusLoader(object):
 
     def __iter__(self):
         if self.generate_iterating_order:
+            self.current_iterating_idx = 0
             self.current_iterating_order = torch.randperm(self.sentences.shape[0])
         for self.current_iterating_idx in range(self.current_iterating_idx, len(self)):
             s_start, s_end = self.sentences[self.current_iterating_idx]
