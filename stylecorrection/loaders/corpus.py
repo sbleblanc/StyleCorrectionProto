@@ -906,9 +906,11 @@ class StreamingBaseDataset(object):
     def __init__(self,
                  src_ds: StreamingH5CorpusLoader,
                  tokens_per_batch: int = 1000,
+                 offset_padding: int = 4999,
                  device: str = "cpu"):
         self.src_ds = src_ds
         self.tokens_per_batch = tokens_per_batch
+        self.offset_padding = offset_padding
         self.device = device
 
     def __iter__(self):
@@ -943,7 +945,7 @@ class StreamingBaseDataset(object):
                 if current_batch_offsets[0] is None:
                     offsets_batch = None
                 else:
-                    offsets_batch = torch.zeros([len(dec_in_batch), current_longest_dec_in], dtype=torch.long).to(self.device)
+                    offsets_batch = torch.empty([len(dec_in_batch), current_longest_dec_in], dtype=torch.long).fill_(self.offset_padding).to(self.device)
 
                 for bi, ne in enumerate(current_batch_enc_in):
                     dec_in_batch[bi, :current_batch_dec_in[bi].shape[0]] = current_batch_dec_in[bi]
@@ -991,7 +993,7 @@ class StreamingCANoiseDataset(StreamingBaseDataset):
                  sigma: float = 0.5,
                  tokens_per_batch: int = 1000,
                  device: str = "cpu"):
-        super(StreamingCANoiseDataset, self).__init__(src_ds, tokens_per_batch, device)
+        super(StreamingCANoiseDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch, device=device)
         self.action_probs = torch.tensor([replace_prob, del_prob, ins_prob, keep_prob, mask_prob]).to(device)
         self.sigma = sigma
         assert self.action_probs.sum().allclose(torch.tensor(1.))
@@ -1029,7 +1031,7 @@ class StreamingMASSPretrainingDataset(StreamingBaseDataset):
                  keeping_prob: float = 0.1,
                  tokens_per_batch: int = 1000,
                  device: str = "cpu"):
-        super(StreamingMASSPretrainingDataset, self).__init__(src_ds, tokens_per_batch, device)
+        super(StreamingMASSPretrainingDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch, device=device)
         self.noising_probs = torch.tensor([masking_prob, random_prob, keeping_prob]).to(device)
         assert self.noising_probs.sum() == 1.
 
@@ -1062,7 +1064,7 @@ class StreamingBARTPretrainingDataset(StreamingBaseDataset):
                  poisson_lambda: float = 3,
                  tokens_per_batch: int = 1000,
                  device: str = "cpu"):
-        super(StreamingBARTPretrainingDataset, self).__init__(src_ds, tokens_per_batch, device)
+        super(StreamingBARTPretrainingDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch, device=device)
         self.masking_ratio = masking_ratio
         self.poisson_dist = torch.distributions.Poisson(poisson_lambda)
 
