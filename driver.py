@@ -558,7 +558,7 @@ elif config['mode'] == 'finetune_streaming':
             cl_direct_noise_train.current_iterating_order = loaded_data['current_iterating_order']
             cl_direct_noise_train.generate_iterating_order = False
             model.load_state_dict(loaded_data['model_state_dict'])
-            optimizer.load_state_dict(loaded_data['optimizer_state_dict'])
+            optimizer.load_state_dict(loaded_data['optim_state_dict'])
 
 
     model_fn = os.path.expandvars(config['finetune']['pretrain_model_fn'])
