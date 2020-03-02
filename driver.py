@@ -432,9 +432,9 @@ elif config['mode'] == 'pretrain_streaming':
                     v_enc_in, v_enc_in_key_mask, v_dec_out, v_dec_in, v_dec_in_key_mask, v_offsets = next(iter(pds_valid))
                     if in_multigpu_mode:
                         if config['pretrain']['algo'] == 'bart':
-                            out = model.model(v_enc_in[:1], v_dec_in[:1], v_enc_in_key_mask[:1], v_dec_in_key_mask[:1], None)
+                            out = model.module.model(v_enc_in[:1], v_dec_in[:1], v_enc_in_key_mask[:1], v_dec_in_key_mask[:1], None)
                         else:
-                            out = model.model(v_enc_in[:1], v_dec_in[:1], v_enc_in_key_mask[:1], v_dec_in_key_mask[:1], v_offsets[:1])
+                            out = model.module.model(v_enc_in[:1], v_dec_in[:1], v_enc_in_key_mask[:1], v_dec_in_key_mask[:1], v_offsets[:1])
                     else:
                         if config['pretrain']['algo'] == 'bart':
                             out = model(v_enc_in[:1], v_dec_in[:1], v_enc_in_key_mask[:1], v_dec_in_key_mask[:1], None)
