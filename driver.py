@@ -422,6 +422,7 @@ elif config['mode'] == 'pretrain_streaming':
                     for vbi, (v_enc_in, v_enc_in_key_mask, v_dec_out, v_dec_in, v_dec_in_key_mask, v_offsets) in enumerate(pds_valid):
                         if in_multigpu_mode:
                             loss = model(v_dec_out, v_enc_in, v_dec_in, v_enc_in_key_mask, v_dec_in_key_mask, v_offsets)
+                            loss = loss.mean()
                         else:
                             out = model(v_enc_in, v_dec_in, v_enc_in_key_mask, v_dec_in_key_mask, v_offsets)
                             loss = criterion(out.contiguous().view(-1, len(cl_valid.vocab)), v_dec_out.view(-1))
@@ -487,6 +488,7 @@ elif config['mode'] == 'pretrain_streaming':
             optimizer.zero_grad()
             if in_multigpu_mode:
                 loss = model(t_dec_out, t_enc_in, t_dec_in, t_enc_in_key_mask, t_dec_in_key_mask, t_offsets)
+                loss = loss.mean()
             else:
                 out = model(t_enc_in, t_dec_in, t_enc_in_key_mask, t_dec_in_key_mask, t_offsets)
                 loss = criterion(out.contiguous().view(-1, len(cl_train.vocab)), t_dec_out.view(-1))
