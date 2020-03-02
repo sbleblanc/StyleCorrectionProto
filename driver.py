@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from stylecorrection.loaders.corpus import *
+from stylecorrection.models.wrappers import *
 from stylecorrection.models.transformer import TransformerS2S
 from stylecorrection.utils.evaluation import compute_scores
 
@@ -18,48 +19,48 @@ params = parser.parse_args()
 with open(params.config, 'r') as in_file:
     config = yaml.load(in_file, Loader=yaml.FullLoader)
 
-# with h5py.File('temp/models/bcu_enwiki_50k_mf2_s0_vocab.h5') as h5_file:
-#     vocab = h5_file['vocab'][:]
-#
-# cl = H5CorpusLoader.load_and_split(
-#     'temp/datasets/obw.h5',
-#     use_split_id=0,
-#     forced_vocab=vocab
-# )
-#
-# model = TransformerS2S(
-#     len(vocab),
-#     512,
-#     8,
-#     4096,
-#     6,
-#     6
-# )
-#
-# with open('temp/models/bcu_enwiki_dn_obw_CA_3_ft.pkl', 'rb') as in_file:
-#     loaded_data = torch.load(in_file, map_location=device)
-#     model.load_state_dict(loaded_data)
-#
-# model.eval()
-#
-# for ds, cs in zip(config['sample_corrections']['dirty'] + ["it is the first time for me to come here ."], config['sample_corrections']['clean']+ ["i hope to hear from you soon ."]):
-#     test_sentence = cl.encode_sentence(ds)
-#
-#     with torch.no_grad():
-#         res = model.beam_decode(
-#             test_sentence,
-#             torch.tensor([cl.bos_idx], dtype=torch.long),
-#             beam_width=5,
-#             max_len=len(test_sentence)+5,
-#             end_token=cl.eos_idx
-#         )
-#
-#     decoded = cl.decode_tensor(torch.tensor(res, dtype=torch.long))
-#     # scores = compute_scores([decoded[0].split(' ')[1:-1]], [cs.split(' ')])
-#     print('[{}] -> [{}] ({})'.format(ds, decoded, cs))
-#     # print(scores)
-#
-# exit()
+with h5py.File('temp/models/bcu_enwiki_50k_mf2_s0_vocab.h5') as h5_file:
+    vocab = h5_file['vocab'][:]
+
+cl = H5CorpusLoader.load_and_split(
+    'temp/datasets/simple_wiki.h5',
+    use_split_id=0,
+    forced_vocab=vocab
+)
+
+model = TransformerS2S(
+    len(vocab),
+    768,
+    8,
+    4096,
+    6,
+    6
+)
+
+with open('temp/models/test.pkl', 'rb') as in_file:
+    loaded_data = torch.load(in_file, map_location=device)
+    model.load_state_dict(loaded_data['model_state_dict'])
+
+model.eval()
+
+for ds, cs in zip(config['sample_corrections']['dirty'] + ["it is the first time for me to come here ."], config['sample_corrections']['clean']+ ["i hope to hear from you soon ."]):
+    test_sentence = cl.encode_sentence(ds)
+
+    with torch.no_grad():
+        res = model.beam_decode(
+            test_sentence,
+            torch.tensor([cl.bos_idx], dtype=torch.long),
+            beam_width=5,
+            max_len=len(test_sentence)+5,
+            end_token=cl.eos_idx
+        )
+
+    decoded = cl.decode_tensor(torch.tensor(res, dtype=torch.long))
+    # scores = compute_scores([decoded[0].split(' ')[1:-1]], [cs.split(' ')])
+    print('[{}] -> [{}] ({})'.format(ds, decoded, cs))
+    # print(scores)
+
+exit()
 
 if config['mode'] == 'hd5_gen':
     print('Creating hd5 dataset...')
@@ -369,8 +370,14 @@ elif config['mode'] == 'pretrain_streaming':
         config['TransformerS2S']['num_dec_layers']
     )
 
+    criterion = nn.CrossEntropyLoss(ignore_index=cl_train.pad_idx)
+
     if config['multi_gpu'] and torch.cuda.device_count() > 1:
+        in_multigpu_mode = True
+        model = DataParallelCELWrapper(model, criterion, len(cl_train.vocab))
         model = nn.DataParallel(model)
+    else:
+        in_multigpu_mode = False
     model.to(device)
 
     if config['pretrain']['optimizer'] == 'adam':
@@ -400,8 +407,6 @@ elif config['mode'] == 'pretrain_streaming':
             optimizer.load_state_dict(loaded_data['optim_state_dict'])
 
 
-    criterion = nn.CrossEntropyLoss(ignore_index=cl_train.pad_idx).to(device)
-
     train_losses = []
     best_valid_loss = float('inf')
     patience_counter = 0
@@ -415,16 +420,25 @@ elif config['mode'] == 'pretrain_streaming':
                 valid_losses = []
                 with torch.no_grad():
                     for vbi, (v_enc_in, v_enc_in_key_mask, v_dec_out, v_dec_in, v_dec_in_key_mask, v_offsets) in enumerate(pds_valid):
-                        out = model(v_enc_in, v_dec_in, v_enc_in_key_mask, v_dec_in_key_mask, v_offsets)
-                        loss = criterion(out.contiguous().view(-1, len(cl_valid.vocab)), v_dec_out.view(-1))
+                        if in_multigpu_mode:
+                            loss = model(v_dec_out.view(-1), v_enc_in, v_dec_in, v_enc_in_key_mask, v_dec_in_key_mask, v_offsets)
+                        else:
+                            out = model(v_enc_in, v_dec_in, v_enc_in_key_mask, v_dec_in_key_mask, v_offsets)
+                            loss = criterion(out.contiguous().view(-1, len(cl_valid.vocab)), v_dec_out.view(-1))
                         valid_losses.append(loss.item())
                         if vbi == config['eval']['num_valid_batch']:
                             break
                     v_enc_in, v_enc_in_key_mask, v_dec_out, v_dec_in, v_dec_in_key_mask, v_offsets = next(iter(pds_valid))
-                    if config['pretrain']['algo'] == 'bart':
-                        out = model(v_enc_in[:1], v_dec_in[:1], v_enc_in_key_mask[:1], v_dec_in_key_mask[:1], None)
+                    if in_multigpu_mode:
+                        if config['pretrain']['algo'] == 'bart':
+                            out = model.model(v_enc_in[:1], v_dec_in[:1], v_enc_in_key_mask[:1], v_dec_in_key_mask[:1], None)
+                        else:
+                            out = model.model(v_enc_in[:1], v_dec_in[:1], v_enc_in_key_mask[:1], v_dec_in_key_mask[:1], v_offsets[:1])
                     else:
-                        out = model(v_enc_in[:1], v_dec_in[:1], v_enc_in_key_mask[:1], v_dec_in_key_mask[:1], v_offsets[:1])
+                        if config['pretrain']['algo'] == 'bart':
+                            out = model(v_enc_in[:1], v_dec_in[:1], v_enc_in_key_mask[:1], v_dec_in_key_mask[:1], None)
+                        else:
+                            out = model(v_enc_in[:1], v_dec_in[:1], v_enc_in_key_mask[:1], v_dec_in_key_mask[:1], v_offsets[:1])
                     if out.numel() == 0:
                         print(v_enc_in)
                     else:
@@ -471,8 +485,11 @@ elif config['mode'] == 'pretrain_streaming':
                 model.train()
 
             optimizer.zero_grad()
-            out = model(t_enc_in, t_dec_in, t_enc_in_key_mask, t_dec_in_key_mask, t_offsets)
-            loss = criterion(out.contiguous().view(-1, len(cl_train.vocab)), t_dec_out.view(-1))
+            if in_multigpu_mode:
+                loss = model(t_dec_out.view(-1), t_enc_in, t_dec_in, t_enc_in_key_mask, t_dec_in_key_mask, t_offsets)
+            else:
+                out = model(t_enc_in, t_dec_in, t_enc_in_key_mask, t_dec_in_key_mask, t_offsets)
+                loss = criterion(out.contiguous().view(-1, len(cl_train.vocab)), t_dec_out.view(-1))
             loss.backward()
             train_losses.append(loss.item())
             optimizer.step()
