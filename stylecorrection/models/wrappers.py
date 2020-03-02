@@ -14,4 +14,4 @@ class DataParallelCELWrapper(nn.Module):
 
     def forward(self, targets, *inputs):
         model_output = self.model(*inputs)
-        return self.loss(model_output.contiguous().view(-1, self.num_classes), targets).unsqueeze(0)
+        return self.loss(model_output.contiguous().view(-1, self.num_classes), targets.view(-1)).unsqueeze(0)
