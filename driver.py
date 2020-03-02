@@ -403,8 +403,11 @@ elif config['mode'] == 'pretrain_streaming':
             cl_train.current_iterating_idx = loaded_data['current_iterating_idx']
             cl_train.current_iterating_order = loaded_data['current_iterating_order']
             cl_train.generate_iterating_order = False
-            model.load_state_dict(loaded_data['model_state_dict'])
             optimizer.load_state_dict(loaded_data['optim_state_dict'])
+            if in_multigpu_mode:
+                model.module.model.load_state_dict(loaded_data['model_state_dict'])
+            else:
+                model.load_state_dict(loaded_data['model_state_dict'])
 
 
     train_losses = []
@@ -460,12 +463,20 @@ elif config['mode'] == 'pretrain_streaming':
                     if valid_loss_mean < best_valid_loss:
                         save_fn = os.path.expandvars(config['pretrain']['best_model_save_fn'])
                         with open(save_fn, 'wb') as out_file:
-                            to_save = {
-                                'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
-                                'current_iterating_order': cl_train.current_iterating_order,
-                                'model_state_dict': model.state_dict(),
-                                'optim_state_dict': optimizer.state_dict()
-                            }
+                            if in_multigpu_mode:
+                                to_save = {
+                                    'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
+                                    'current_iterating_order': cl_train.current_iterating_order,
+                                    'model_state_dict': model.module.model.state_dict(),
+                                    'optim_state_dict': optimizer.state_dict()
+                                }
+                            else:
+                                to_save = {
+                                    'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
+                                    'current_iterating_order': cl_train.current_iterating_order,
+                                    'model_state_dict': model.state_dict(),
+                                    'optim_state_dict': optimizer.state_dict()
+                                }
                             torch.save(to_save, out_file)
                         patience_counter = 0
                         best_valid_loss = valid_loss_mean
@@ -474,12 +485,20 @@ elif config['mode'] == 'pretrain_streaming':
 
                     save_fn = os.path.expandvars(config['pretrain']['current_model_save_fn'])
                     with open(save_fn, 'wb') as out_file:
-                        to_save = {
-                            'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
-                            'current_iterating_order': cl_train.current_iterating_order,
-                            'model_state_dict': model.state_dict(),
-                            'optim_state_dict': optimizer.state_dict()
-                        }
+                        if in_multigpu_mode:
+                            to_save = {
+                                'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
+                                'current_iterating_order': cl_train.current_iterating_order,
+                                'model_state_dict': model.module.model.state_dict(),
+                                'optim_state_dict': optimizer.state_dict()
+                            }
+                        else:
+                            to_save = {
+                                'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
+                                'current_iterating_order': cl_train.current_iterating_order,
+                                'model_state_dict': model.state_dict(),
+                                'optim_state_dict': optimizer.state_dict()
+                            }
                         torch.save(to_save, out_file)
 
                 train_losses.clear()
@@ -549,8 +568,14 @@ elif config['mode'] == 'finetune_streaming':
         config['TransformerS2S']['num_dec_layers']
     )
 
+    criterion = nn.CrossEntropyLoss(ignore_index=cl_direct_noise_train.pad_idx)
+
     if config['multi_gpu'] and torch.cuda.device_count() > 1:
+        in_multigpu_mode = True
+        model = DataParallelCELWrapper(model, criterion, len(cl_direct_noise_train.vocab))
         model = nn.DataParallel(model)
+    else:
+        in_multigpu_mode = False
     model.to(device)
 
     if config['finetune']['optimizer'] == 'adam':
@@ -576,16 +601,21 @@ elif config['mode'] == 'finetune_streaming':
             cl_direct_noise_train.current_iterating_idx = loaded_data['current_iterating_idx']
             cl_direct_noise_train.current_iterating_order = loaded_data['current_iterating_order']
             cl_direct_noise_train.generate_iterating_order = False
-            model.load_state_dict(loaded_data['model_state_dict'])
             optimizer.load_state_dict(loaded_data['optim_state_dict'])
+            if in_multigpu_mode:
+                model.module.model.load_state_dict(loaded_data['model_state_dict'])
+            else:
+                model.load_state_dict(loaded_data['model_state_dict'])
 
     model_fn = os.path.expandvars(config['finetune']['pretrain_model_fn'])
     with open(model_fn, 'rb') as in_file:
         loaded_data = torch.load(in_file, map_location=device)
-        model.load_state_dict(loaded_data['model_state_dict'])
+        if in_multigpu_mode:
+            model.module.model.load_state_dict(loaded_data['model_state_dict'])
+        else:
+            model.load_state_dict(loaded_data['model_state_dict'])
         loaded_data = None
 
-    criterion = nn.CrossEntropyLoss(ignore_index=cl_direct_noise_train.pad_idx).to(device)
     train_losses = []
     best_valid_loss = float('inf')
     patience_counter = 0
@@ -598,13 +628,20 @@ elif config['mode'] == 'finetune_streaming':
                 valid_losses = []
                 with torch.no_grad():
                     for vbi, (v_noised_batch, v_input_key_mask, v_bos_trunc, v_eos_trunc, v_output_key_mask, v_offsets) in enumerate(dnds_valid):
-                        out = model(v_noised_batch, v_eos_trunc, v_input_key_mask, v_output_key_mask, None)
-                        loss = criterion(out.contiguous().view(-1, len(cl_direct_noise_valid.vocab)), v_bos_trunc.view(-1))
+                        if in_multigpu_mode:
+                            loss = model(v_bos_trunc, v_noised_batch, v_eos_trunc, v_input_key_mask, v_output_key_mask, None)
+                            loss = loss.mean()
+                        else:
+                            out = model(v_noised_batch, v_eos_trunc, v_input_key_mask, v_output_key_mask, None)
+                            loss = criterion(out.contiguous().view(-1, len(cl_direct_noise_valid.vocab)), v_bos_trunc.view(-1))
                         valid_losses.append(loss.item())
                         if vbi == config['eval']['num_valid_batch']:
                             break
                     v_noised_batch, v_input_key_mask, v_bos_trunc, v_eos_trunc, v_output_key_mask, v_offsets = next(iter(dnds_valid))
-                    out = model(v_noised_batch[:1], v_eos_trunc[:1], v_input_key_mask[:1], v_output_key_mask[:1], None)
+                    if in_multigpu_mode:
+                        out = model.module.model(v_noised_batch[:1], v_eos_trunc[:1], v_input_key_mask[:1], v_output_key_mask[:1], None)
+                    else:
+                        out = model(v_noised_batch[:1], v_eos_trunc[:1], v_input_key_mask[:1], v_output_key_mask[:1], None)
                     if out.numel() == 0:
                         print(v_noised_batch)
                     else:
@@ -625,12 +662,21 @@ elif config['mode'] == 'finetune_streaming':
                     if valid_loss_mean < best_valid_loss:
                         save_fn = os.path.expandvars(config['finetune']['best_model_save_fn'])
                         with open(save_fn, 'wb') as out_file:
-                            to_save = {
-                                'current_iterating_idx': cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0],
-                                'current_iterating_order': cl_direct_noise_train.current_iterating_order,
-                                'model_state_dict': model.state_dict(),
-                                'optim_state_dict': optimizer.state_dict()
-                            }
+                            if in_multigpu_mode:
+                                to_save = {
+                                    'current_iterating_idx': cl_direct_noise_train.current_iterating_idx -
+                                                             t_noised_batch.shape[0],
+                                    'current_iterating_order': cl_direct_noise_train.current_iterating_order,
+                                    'model_state_dict': model.module.model.state_dict(),
+                                    'optim_state_dict': optimizer.state_dict()
+                                }
+                            else:
+                                to_save = {
+                                    'current_iterating_idx': cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0],
+                                    'current_iterating_order': cl_direct_noise_train.current_iterating_order,
+                                    'model_state_dict': model.state_dict(),
+                                    'optim_state_dict': optimizer.state_dict()
+                                }
                             torch.save(to_save, out_file)
                         patience_counter = 0
                         best_valid_loss = valid_loss_mean
@@ -639,20 +685,34 @@ elif config['mode'] == 'finetune_streaming':
 
                     save_fn = os.path.expandvars(config['finetune']['current_model_save_fn'])
                     with open(save_fn, 'wb') as out_file:
-                        to_save = {
-                            'current_iterating_idx': cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0],
-                            'current_iterating_order': cl_direct_noise_train.current_iterating_order,
-                            'model_state_dict': model.state_dict(),
-                            'optim_state_dict': optimizer.state_dict()
-                        }
+                        if in_multigpu_mode:
+                            to_save = {
+                                'current_iterating_idx': cl_direct_noise_train.current_iterating_idx -
+                                                         t_noised_batch.shape[0],
+                                'current_iterating_order': cl_direct_noise_train.current_iterating_order,
+                                'model_state_dict': model.module.model.state_dict(),
+                                'optim_state_dict': optimizer.state_dict()
+                            }
+                        else:
+                            to_save = {
+                                'current_iterating_idx': cl_direct_noise_train.current_iterating_idx -
+                                                         t_noised_batch.shape[0],
+                                'current_iterating_order': cl_direct_noise_train.current_iterating_order,
+                                'model_state_dict': model.state_dict(),
+                                'optim_state_dict': optimizer.state_dict()
+                            }
                         torch.save(to_save, out_file)
 
                 train_losses.clear()
                 model.train()
 
             optimizer.zero_grad()
-            out = model(t_noised_batch, t_eos_trunc, t_input_key_mask, t_output_key_mask, None)
-            loss = criterion(out.contiguous().view(-1, len(cl_direct_noise_train.vocab)), t_bos_trunc.view(-1))
+            if in_multigpu_mode:
+                loss = model(t_bos_trunc, t_noised_batch, t_eos_trunc, t_input_key_mask, t_output_key_mask, None)
+                loss = loss.mean()
+            else:
+                out = model(t_noised_batch, t_eos_trunc, t_input_key_mask, t_output_key_mask, None)
+                loss = criterion(out.contiguous().view(-1, len(cl_direct_noise_train.vocab)), t_bos_trunc.view(-1))
             loss.backward()
             train_losses.append(loss.item())
             optimizer.step()
