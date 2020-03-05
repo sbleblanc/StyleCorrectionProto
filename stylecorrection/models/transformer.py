@@ -73,7 +73,8 @@ class TransformerS2S(nn.Module):
                     beam_width: int = 5,
                     max_len: int = 175,
                     end_token: int = -1,
-                    position_offset: int = 0):
+                    position_offset: int = 0,
+                    device: str = 'cpu'):
         if input.ndim == 1:
             input = input.unsqueeze(0)
         # if output_seed.ndim == 1:
@@ -86,9 +87,9 @@ class TransformerS2S(nn.Module):
         for pi in range(max_len):
             potential_candidates = []
             for prob, candidate in candidates:
-                offset = torch.arange(position_offset, position_offset+len(candidate))
-                t_candidate = torch.tensor(candidate, dtype=torch.long).unsqueeze(0)
-                decoded = self.decode(encoded_input, None, t_candidate, None, offset)
+                # offset = torch.arange(position_offset, position_offset+len(candidate))
+                t_candidate = torch.tensor(candidate, dtype=torch.long).unsqueeze(0).to(device)
+                decoded = self.decode(encoded_input, None, t_candidate, None, None)
                 probs, indices = nn.functional.log_softmax(decoded, dim=-1).sort(dim=-1, descending=True)
                 for p, vi in zip(probs[0, -1, :beam_width], indices[0, -1, :beam_width]):
                     potential_candidates.append((p.item() + prob, candidate + [vi.item()]))

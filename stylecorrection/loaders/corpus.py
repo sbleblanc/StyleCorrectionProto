@@ -457,8 +457,8 @@ class StreamingH5CorpusLoader(object):
             print('DONE')
 
             print('Computing unigram probabilities...', end='')
-            unigram_probs = torch.zeros(len(temp_vocab))
-            smoothing = torch.empty(len(temp_vocab)).fill_(smoothing_alpha)
+            unigram_probs = torch.zeros(len(temp_vocab)).to(device)
+            smoothing = torch.empty(len(temp_vocab)).fill_(smoothing_alpha).to(device)
             smoothing[:5] = 0
             for i in range(5, len(temp_vocab)):
                 if i in rtg_mapping:
@@ -1048,11 +1048,16 @@ class StreamingMASSPretrainingDataset(StreamingBaseDataset):
         shifted_masked_slice[0] = self.src_ds.mask_idx
         shifted_masked_slice[1:] = masked_slice[:-1]
         actions = self.noising_probs.multinomial(mask_len, replacement=True)
-        for ai, si in enumerate(range(mask_start, mask_start + mask_len)):
-            if actions[ai] == 0:
-                masked_example[si] = self.src_ds.wtoi[self.src_ds.mask_token]
-            elif actions[ai] == 1:
-                masked_example[si] = self.src_ds.unigram_probs.multinomial(1).item()
+        mask_indices = (actions == 0).nonzero().squeeze(1)
+        replace_indices = (actions == 1).nonzero().squeeze(1)
+        masked_example[mask_indices+mask_start] = self.src_ds.mask_idx
+        if replace_indices.shape[0] > 0:
+            masked_example[replace_indices] = self.src_ds.unigram_probs.multinomial(replace_indices.shape[0])
+        # for ai, si in enumerate(range(mask_start, mask_start + mask_len)):
+        #     if actions[ai] == 0:
+        #         masked_example[si] = self.src_ds.wtoi[self.src_ds.mask_token]
+        #     elif actions[ai] == 1:
+        #         masked_example[si] = self.src_ds.unigram_probs.multinomial(1).item()
 
         return masked_example, shifted_masked_slice, masked_slice, torch.arange(mask_start, mask_start+mask_len)
 
