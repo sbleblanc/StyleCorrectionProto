@@ -1,4 +1,5 @@
 import torch.nn as nn
+import codecs
 
 
 class DataParallelCELWrapper(nn.Module):

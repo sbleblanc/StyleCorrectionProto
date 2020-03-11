@@ -19,48 +19,54 @@ params = parser.parse_args()
 with open(params.config, 'r') as in_file:
     config = yaml.load(in_file, Loader=yaml.FullLoader)
 
-# with h5py.File('temp/models/bcu_enwiki_50k_mf2_s0_vocab.h5') as h5_file:
-#     vocab = h5_file['vocab'][:]
-#
-# cl = H5CorpusLoader.load_and_split(
-#     'temp/datasets/simple_wiki.h5',
-#     use_split_id=0,
-#     forced_vocab=vocab
-# )
-#
-# model = TransformerS2S(
-#     len(vocab),
-#     768,
-#     8,
-#     4096,
-#     6,
-#     6
-# )
-#
-# with open('temp/models/test.pkl', 'rb') as in_file:
-#     loaded_data = torch.load(in_file, map_location=device)
-#     model.load_state_dict(loaded_data['model_state_dict'])
-#
-# model.eval()
-#
-# for ds, cs in zip(config['sample_corrections']['dirty'] + ["it is the first time for me to come here ."], config['sample_corrections']['clean']+ ["i hope to hear from you soon ."]):
-#     test_sentence = cl.encode_sentence(ds)
-#
-#     with torch.no_grad():
-#         res = model.beam_decode(
-#             test_sentence,
-#             torch.tensor([cl.bos_idx], dtype=torch.long),
-#             beam_width=5,
-#             max_len=len(test_sentence)+5,
-#             end_token=cl.eos_idx
-#         )
-#
-#     decoded = cl.decode_tensor(torch.tensor(res, dtype=torch.long))
-#     # scores = compute_scores([decoded[0].split(' ')[1:-1]], [cs.split(' ')])
-#     print('[{}] -> [{}] ({})'.format(ds, decoded, cs))
-#     # print(scores)
-#
-# exit()
+if config['mode'] == 'eval':
+    print('Starting manual evaluation...')
+    if config['force_cpu']:
+        device = 'cpu'
+
+    vocab_path = os.path.expandvars(config['eval']['h5']['vocab'])
+    with h5py.File(vocab_path) as h5_file:
+        vocab = h5_file['vocab'][:]
+
+    ft_corpus_path = os.path.expandvars(config['eval']['h5']['ft_corpus'])
+    cl = H5CorpusLoader.load_and_split(
+        ft_corpus_path,
+        use_split_id=config['eval']['h5']['ft_corpus_split'],
+        forced_vocab=vocab
+    )
+
+    model = TransformerS2S(
+        len(cl.vocab),
+        config['TransformerS2S']['emb_dim'],
+        config['TransformerS2S']['n_head'],
+        config['TransformerS2S']['ff_dim'],
+        config['TransformerS2S']['num_enc_layers'],
+        config['TransformerS2S']['num_dec_layers']
+    )
+
+    pretrained_mdl_path = os.path.expandvars(config['eval']['pretrained_model'])
+    with open(pretrained_mdl_path, 'rb') as in_file:
+        loaded_data = torch.load(in_file, map_location=device)
+        model.load_state_dict(loaded_data['model_state_dict'])
+    model.to(device)
+    model.eval()
+
+    for ds, cs in zip(config['eval']['sample_corrections']['dirty'],
+                      config['eval']['sample_corrections']['clean']):
+        test_sentence = cl.encode_sentence(ds).to(device)
+
+        with torch.no_grad():
+            res = model.beam_decode(
+                test_sentence,
+                torch.tensor([cl.bos_idx], dtype=torch.long),
+                beam_width=5,
+                max_len=len(test_sentence) + 5,
+                end_token=cl.eos_idx,
+                device=device
+            )
+
+        decoded = cl.decode_tensor(torch.tensor(res, dtype=torch.long))
+        print('[{}] -> [{}] ({})'.format(ds, decoded, cs))
 
 if config['mode'] == 'hd5_gen':
     print('Creating hd5 dataset...')
