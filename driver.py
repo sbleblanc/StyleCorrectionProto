@@ -21,7 +21,7 @@ with open(params.config, 'r') as in_file:
 
 if config['mode'] == 'eval':
     print('Starting manual evaluation...')
-    if config['force_cpu']:
+    if config['eval']['force_cpu']:
         device = 'cpu'
 
     vocab_path = os.path.expandvars(config['eval']['h5']['vocab'])
