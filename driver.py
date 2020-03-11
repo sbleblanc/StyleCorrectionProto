@@ -25,7 +25,7 @@ if config['mode'] == 'eval':
         device = 'cpu'
 
     vocab_path = os.path.expandvars(config['eval']['h5']['vocab'])
-    with h5py.File(vocab_path) as h5_file:
+    with h5py.File(vocab_path, 'r') as h5_file:
         vocab = h5_file['vocab'][:]
 
     ft_corpus_path = os.path.expandvars(config['eval']['h5']['ft_corpus'])
