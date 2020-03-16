@@ -361,11 +361,11 @@ elif config['mode'] == 'pretrain_streaming':
     )
     if config['pretrain']['algo'] == 'bart':
         print('Using text infilling (BART)')
-        pds_train = StreamingBARTPretrainingDataset(cl_train, tokens_per_batch=config['pretrain']['tpb'], device=device)
-        pds_valid = StreamingBARTPretrainingDataset(cl_valid, tokens_per_batch=config['pretrain']['tpb'], device=device)
+        pds_train = StreamingBARTPretrainingDataset(cl_train, tokens_per_batch=config['pretrain']['tpb'], max_trainable_tokens=config['pretrain']['mttpb'], device=device)
+        pds_valid = StreamingBARTPretrainingDataset(cl_valid, tokens_per_batch=config['pretrain']['tpb'], max_trainable_tokens=config['pretrain']['mttpb'], device=device)
     else:
-        pds_train = StreamingMASSPretrainingDataset(cl_train, tokens_per_batch=config['pretrain']['tpb'], device=device)
-        pds_valid = StreamingMASSPretrainingDataset(cl_valid, tokens_per_batch=config['pretrain']['tpb'], device=device)
+        pds_train = StreamingMASSPretrainingDataset(cl_train, tokens_per_batch=config['pretrain']['tpb'], max_trainable_tokens=config['pretrain']['mttpb'], device=device)
+        pds_valid = StreamingMASSPretrainingDataset(cl_valid, tokens_per_batch=config['pretrain']['tpb'], max_trainable_tokens=config['pretrain']['mttpb'], device=device)
 
     model = TransformerS2S(
         len(cl_train.vocab),
@@ -546,6 +546,7 @@ elif config['mode'] == 'finetune_streaming':
                                              mask_prob=config['finetune']['dataset']['ca']['mask_prob'],
                                              sigma=config['finetune']['dataset']['ca']['sigma'],
                                              tokens_per_batch=config['finetune']['dataset']['ca']['tpb'],
+                                             max_trainable_tokens=config['finetune']['dataset']['ca']['mttpb'],
                                              device=device)
         dnds_valid = StreamingCANoiseDataset(cl_direct_noise_valid,
                                              replace_prob=config['finetune']['dataset']['ca']['replace_prob'],
@@ -555,6 +556,7 @@ elif config['mode'] == 'finetune_streaming':
                                              mask_prob=config['finetune']['dataset']['ca']['mask_prob'],
                                              sigma=config['finetune']['dataset']['ca']['sigma'],
                                              tokens_per_batch=config['finetune']['dataset']['ca']['tpb'],
+                                             max_trainable_tokens=config['finetune']['dataset']['ca']['mttpb'],
                                              device=device)
     else:
         pass

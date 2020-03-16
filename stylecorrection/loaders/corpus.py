@@ -906,10 +906,12 @@ class StreamingBaseDataset(object):
     def __init__(self,
                  src_ds: StreamingH5CorpusLoader,
                  tokens_per_batch: int = 1000,
+                 max_trainable_tokens: int = 1000,
                  offset_padding: int = 4999,
                  device: str = "cpu"):
         self.src_ds = src_ds
         self.tokens_per_batch = tokens_per_batch
+        self.max_trainable_tokens = max_trainable_tokens
         self.offset_padding = offset_padding
         self.device = device
 
@@ -925,16 +927,16 @@ class StreamingBaseDataset(object):
         current_longest_dec_out = 0
 
         examples_exhausted = False
-        batch_token_count = 0
+        batch_trainable_token_count = 0
         while not examples_exhausted:
             try:
                 example = next(clean_examples_iter)
                 enc_input, dec_input, dec_output, offsets = self.process_example(example)
             except StopIteration:
                 examples_exhausted = True
-            batch_token_count += enc_input.shape[0] + dec_input.shape[0]
-            # batch_token_count = max(current_longest_enc_in, enc_input.shape[0]) * (len(current_batch_enc_in) + 1) + max(current_longest_dec_in, dec_input.shape[0]) * (len(current_batch_enc_in) + 1)
-            if batch_token_count > self.tokens_per_batch or examples_exhausted:
+            batch_trainable_token_count += enc_input.shape[0] + dec_input.shape[0]
+            batch_token_count = max(current_longest_enc_in, enc_input.shape[0]) * (len(current_batch_enc_in) + 1) + max(current_longest_dec_in, dec_input.shape[0]) * (len(current_batch_enc_in) + 1)
+            if batch_token_count > self.tokens_per_batch or batch_trainable_token_count > self.max_trainable_tokens or examples_exhausted:
                 enc_in_bacth = torch.empty([len(current_batch_enc_in), current_longest_enc_in], dtype=torch.long).fill_(
                     self.src_ds.pad_idx).to(self.device)
                 dec_in_batch = torch.empty([len(current_batch_dec_in), current_longest_dec_in], dtype=torch.long).fill_(
@@ -966,7 +968,7 @@ class StreamingBaseDataset(object):
                 current_longest_dec_in = 0
                 current_longest_enc_in = 0
                 current_longest_dec_out = 0
-                batch_token_count = 0
+                batch_trainable_token_count = 0
 
             if enc_input.shape[0] > current_longest_enc_in:
                 current_longest_enc_in = enc_input.shape[0]
@@ -995,8 +997,9 @@ class StreamingCANoiseDataset(StreamingBaseDataset):
                  mask_prob: float = 0.4,
                  sigma: float = 0.5,
                  tokens_per_batch: int = 1000,
+                 max_trainable_tokens: int = 1000,
                  device: str = "cpu"):
-        super(StreamingCANoiseDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch, device=device)
+        super(StreamingCANoiseDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch, max_trainable_tokens=max_trainable_tokens, device=device)
         self.action_probs = torch.tensor([replace_prob, del_prob, ins_prob, keep_prob, mask_prob]).to(device)
         self.sigma = sigma
         assert self.action_probs.sum().allclose(torch.tensor(1.))
@@ -1033,8 +1036,9 @@ class StreamingMASSPretrainingDataset(StreamingBaseDataset):
                  random_prob: float = 0.1,
                  keeping_prob: float = 0.1,
                  tokens_per_batch: int = 1000,
+                 max_trainable_tokens: int = 1000,
                  device: str = "cpu"):
-        super(StreamingMASSPretrainingDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch, device=device)
+        super(StreamingMASSPretrainingDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch, max_trainable_tokens=max_trainable_tokens, device=device)
         self.noising_probs = torch.tensor([masking_prob, random_prob, keeping_prob]).to(device)
         assert self.noising_probs.sum() == 1.
 
@@ -1071,8 +1075,9 @@ class StreamingBARTPretrainingDataset(StreamingBaseDataset):
                  masking_ratio: float = 0.3,
                  poisson_lambda: float = 3,
                  tokens_per_batch: int = 1000,
+                 max_trainable_tokens: int = 1000,
                  device: str = "cpu"):
-        super(StreamingBARTPretrainingDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch, device=device)
+        super(StreamingBARTPretrainingDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch, max_trainable_tokens=max_trainable_tokens, device=device)
         self.masking_ratio = masking_ratio
         self.poisson_dist = torch.distributions.Poisson(poisson_lambda)
 
