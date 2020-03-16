@@ -21,17 +21,17 @@ with open(params.config, 'r') as in_file:
 
 if config['mode'] == 'eval':
     print('Starting manual evaluation...')
-    if config['eval']['force_cpu']:
+    if config['manual_eval']['force_cpu']:
         device = 'cpu'
 
-    vocab_path = os.path.expandvars(config['eval']['h5']['vocab'])
+    vocab_path = os.path.expandvars(config['manual_eval']['h5']['vocab'])
     with h5py.File(vocab_path, 'r') as h5_file:
         vocab = h5_file['vocab'][:]
 
-    ft_corpus_path = os.path.expandvars(config['eval']['h5']['ft_corpus'])
+    ft_corpus_path = os.path.expandvars(config['manual_eval']['h5']['ft_corpus'])
     cl = H5CorpusLoader.load_and_split(
         ft_corpus_path,
-        use_split_id=config['eval']['h5']['ft_corpus_split'],
+        use_split_id=config['manual_eval']['h5']['ft_corpus_split'],
         forced_vocab=vocab
     )
 
@@ -44,15 +44,15 @@ if config['mode'] == 'eval':
         config['TransformerS2S']['num_dec_layers']
     )
 
-    pretrained_mdl_path = os.path.expandvars(config['eval']['pretrained_model'])
+    pretrained_mdl_path = os.path.expandvars(config['manual_eval']['pretrained_model'])
     with open(pretrained_mdl_path, 'rb') as in_file:
         loaded_data = torch.load(in_file, map_location=device)
         model.load_state_dict(loaded_data['model_state_dict'])
     model.to(device)
     model.eval()
 
-    for ds, cs in zip(config['eval']['sample_corrections']['dirty'],
-                      config['eval']['sample_corrections']['clean']):
+    for ds, cs in zip(config['manual_eval']['sample_corrections']['dirty'],
+                      config['manual_eval']['sample_corrections']['clean']):
         test_sentence = cl.encode_sentence(ds).to(device)
 
         with torch.no_grad():
