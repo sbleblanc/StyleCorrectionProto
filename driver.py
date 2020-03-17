@@ -357,6 +357,7 @@ elif config['mode'] == 'pretrain_streaming':
         corpus_h5_fn,
         use_split_id=config['pretrain']['hd5']['valid_split_id'],
         forced_vocab=vocab,
+        max_sent_len=config['pretrain']['max_sent_len'],
         device=device
     )
     if config['pretrain']['algo'] == 'bart':
@@ -542,7 +543,8 @@ elif config['mode'] == 'finetune_streaming':
         h5_fn_finetune,
         use_split_id=config['finetune']['hd5']['finetune']['valid_split_id'],
         forced_vocab=vocab,
-        smoothing_alpha=config['finetune']['hd5']['finetune']['smoothing_alpha']
+        smoothing_alpha=config['finetune']['hd5']['finetune']['smoothing_alpha'],
+        max_sent_len=config['finetune']['max_sent_len']
     )
     if config['finetune']['dataset']['to_use'] == 'ca':
         dnds_train = StreamingCANoiseDataset(cl_direct_noise_train,

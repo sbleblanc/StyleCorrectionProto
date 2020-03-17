@@ -395,6 +395,7 @@ class StreamingH5CorpusLoader(object):
                        use_split_id: int = 0,
                        vocab_topk: int = 0,
                        min_freq: int = 2,
+                       max_sent_len: int = 0,
                        forced_vocab: List[str] = None,
                        smoothing_alpha: float = 0.,
                        device: str = "cpu"):
@@ -407,8 +408,14 @@ class StreamingH5CorpusLoader(object):
             valid_selector = splits_ds[use_split_id]
 
             splits = dict()
-            splits['valid'] = sentences[valid_selector.nonzero()[0]]
-            splits['train'] = sentences[(1-valid_selector).nonzero()[0]]
+            if max_sent_len > 0:
+                sent_len = sentences[:, 1] - sentences[:, 0]
+                to_keep = (sent_len <= max_sent_len).numpy()
+                splits['valid'] = sentences[(valid_selector & to_keep).nonzero()[0]]
+                splits['train'] = sentences[(1 - (valid_selector & to_keep)).nonzero()[0]]
+            else:
+                splits['valid'] = sentences[valid_selector.nonzero()[0]]
+                splits['train'] = sentences[(1-valid_selector).nonzero()[0]]
             print('DONE')
 
             print('Counting words...', end='')
