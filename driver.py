@@ -402,6 +402,8 @@ elif config['mode'] == 'pretrain_streaming':
         model_save_fn = os.path.expandvars(config['pretrain']['best_model_save_fn'])
     else:
         model_save_fn = os.path.expandvars(config['pretrain']['current_model_save_fn'])
+
+    best_valid_loss = float('inf')
     if os.path.exists(model_save_fn):
         with open(model_save_fn, 'rb') as data_file:
             print('Loading from {}'.format(model_save_fn))
@@ -414,10 +416,11 @@ elif config['mode'] == 'pretrain_streaming':
                 model.module.model.load_state_dict(loaded_data['model_state_dict'])
             else:
                 model.load_state_dict(loaded_data['model_state_dict'])
+            if 'best_valid_loss' in loaded_data:
+                best_valid_loss = loaded_data['best_valid_loss']
 
 
     train_losses = []
-    best_valid_loss = float('inf')
     patience_counter = 0
 
     for i in range(config['pretrain']['max_epoch']):
@@ -474,14 +477,16 @@ elif config['mode'] == 'pretrain_streaming':
                                     'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
                                     'current_iterating_order': cl_train.current_iterating_order,
                                     'model_state_dict': model.module.model.state_dict(),
-                                    'optim_state_dict': optimizer.state_dict()
+                                    'optim_state_dict': optimizer.state_dict(),
+                                    'best_valid_loss': valid_loss_mean
                                 }
                             else:
                                 to_save = {
                                     'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
                                     'current_iterating_order': cl_train.current_iterating_order,
                                     'model_state_dict': model.state_dict(),
-                                    'optim_state_dict': optimizer.state_dict()
+                                    'optim_state_dict': optimizer.state_dict(),
+                                    'best_valid_loss': valid_loss_mean
                                 }
                             torch.save(to_save, out_file)
                         patience_counter = 0
@@ -496,14 +501,16 @@ elif config['mode'] == 'pretrain_streaming':
                                 'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
                                 'current_iterating_order': cl_train.current_iterating_order,
                                 'model_state_dict': model.module.model.state_dict(),
-                                'optim_state_dict': optimizer.state_dict()
+                                'optim_state_dict': optimizer.state_dict(),
+                                'best_valid_loss': best_valid_loss
                             }
                         else:
                             to_save = {
                                 'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
                                 'current_iterating_order': cl_train.current_iterating_order,
                                 'model_state_dict': model.state_dict(),
-                                'optim_state_dict': optimizer.state_dict()
+                                'optim_state_dict': optimizer.state_dict(),
+                                'best_valid_loss': best_valid_loss
                             }
                         torch.save(to_save, out_file)
 
@@ -602,6 +609,8 @@ elif config['mode'] == 'finetune_streaming':
         model_save_fn = os.path.expandvars(config['finetune']['best_model_save_fn'])
     else:
         model_save_fn = os.path.expandvars(config['finetune']['current_model_save_fn'])
+
+    best_valid_loss = float('inf')
     if os.path.exists(model_save_fn):
         with open(model_save_fn, 'rb') as data_file:
             print('Loading from {}'.format(model_save_fn))
@@ -614,6 +623,8 @@ elif config['mode'] == 'finetune_streaming':
                 model.module.model.load_state_dict(loaded_data['model_state_dict'])
             else:
                 model.load_state_dict(loaded_data['model_state_dict'])
+            if "best_valid_loss" in loaded_data:
+                best_valid_loss = loaded_data['best_valid']
 
     model_fn = os.path.expandvars(config['finetune']['pretrain_model_fn'])
     with open(model_fn, 'rb') as in_file:
@@ -625,7 +636,7 @@ elif config['mode'] == 'finetune_streaming':
         loaded_data = None
 
     train_losses = []
-    best_valid_loss = float('inf')
+
     patience_counter = 0
     for i in range(config['finetune']['max_epoch']):
         model.train()
@@ -676,14 +687,16 @@ elif config['mode'] == 'finetune_streaming':
                                                              t_noised_batch.shape[0],
                                     'current_iterating_order': cl_direct_noise_train.current_iterating_order,
                                     'model_state_dict': model.module.model.state_dict(),
-                                    'optim_state_dict': optimizer.state_dict()
+                                    'optim_state_dict': optimizer.state_dict(),
+                                    'best_valid_loss': valid_loss_mean
                                 }
                             else:
                                 to_save = {
                                     'current_iterating_idx': cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0],
                                     'current_iterating_order': cl_direct_noise_train.current_iterating_order,
                                     'model_state_dict': model.state_dict(),
-                                    'optim_state_dict': optimizer.state_dict()
+                                    'optim_state_dict': optimizer.state_dict(),
+                                    'best_valid_loss': valid_loss_mean
                                 }
                             torch.save(to_save, out_file)
                         patience_counter = 0
@@ -699,7 +712,8 @@ elif config['mode'] == 'finetune_streaming':
                                                          t_noised_batch.shape[0],
                                 'current_iterating_order': cl_direct_noise_train.current_iterating_order,
                                 'model_state_dict': model.module.model.state_dict(),
-                                'optim_state_dict': optimizer.state_dict()
+                                'optim_state_dict': optimizer.state_dict(),
+                                'best_valid_loss': best_valid_loss
                             }
                         else:
                             to_save = {
@@ -707,7 +721,8 @@ elif config['mode'] == 'finetune_streaming':
                                                          t_noised_batch.shape[0],
                                 'current_iterating_order': cl_direct_noise_train.current_iterating_order,
                                 'model_state_dict': model.state_dict(),
-                                'optim_state_dict': optimizer.state_dict()
+                                'optim_state_dict': optimizer.state_dict(),
+                                'best_valid_loss': best_valid_loss
                             }
                         torch.save(to_save, out_file)
 

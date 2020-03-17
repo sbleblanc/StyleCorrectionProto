@@ -932,10 +932,15 @@ class StreamingBaseDataset(object):
             try:
                 example = next(clean_examples_iter)
                 enc_input, dec_input, dec_output, offsets = self.process_example(example)
+                batch_trainable_token_count += enc_input.shape[0] + dec_input.shape[0]
+                batch_token_count = max(current_longest_enc_in, enc_input.shape[0]) * (
+                            len(current_batch_enc_in) + 1) + max(current_longest_dec_in, dec_input.shape[0]) * (
+                                                len(current_batch_enc_in) + 1)
+                if enc_input.shape[0] + dec_input.shape[0] > self.max_trainable_tokens:
+                    continue
             except StopIteration:
                 examples_exhausted = True
-            batch_trainable_token_count += enc_input.shape[0] + dec_input.shape[0]
-            batch_token_count = max(current_longest_enc_in, enc_input.shape[0]) * (len(current_batch_enc_in) + 1) + max(current_longest_dec_in, dec_input.shape[0]) * (len(current_batch_enc_in) + 1)
+
             if batch_token_count > self.tokens_per_batch or batch_trainable_token_count > self.max_trainable_tokens or examples_exhausted:
                 enc_in_bacth = torch.empty([len(current_batch_enc_in), current_longest_enc_in], dtype=torch.long).fill_(
                     self.src_ds.pad_idx).to(self.device)
