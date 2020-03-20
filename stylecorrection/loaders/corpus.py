@@ -6,7 +6,7 @@ import torch.nn as nn
 import numpy as np
 import itertools as it
 from collections import Counter
-from typing import Callable, List, Tuple, Dict
+from typing import Callable, List, Tuple, Dict, Union
 import stylecorrection.utils.cython_utils as cu
 
 
@@ -398,6 +398,7 @@ class StreamingH5CorpusLoader(object):
                        max_sent_len: int = 0,
                        forced_vocab: List[str] = None,
                        smoothing_alpha: float = 0.,
+                       group_by_len: bool = False,
                        device: str = "cpu"):
         with h5py.File(h5_fn, 'r') as h5_file:
             print('Loading in memory...', end='')
@@ -417,6 +418,45 @@ class StreamingH5CorpusLoader(object):
                 splits['valid'] = sentences[valid_selector.nonzero()[0]]
                 splits['train'] = sentences[(1-valid_selector).nonzero()[0]]
             print('DONE')
+
+            if group_by_len:
+                print('Grouping by lengths...', end='')
+
+                groups = dict()
+
+                sent_len = (splits['train'][:, 1] - splits['train'][:, 0]).numpy()
+                sorted_idx = sent_len.argsort()
+                num_buckets = np.unique(sent_len).shape[0]
+                bucket_ranges = np.zeros([num_buckets, 2], dtype=np.int)
+                bucket_idx = 0
+                bucket_counter = 0
+                for k, g in it.groupby(sent_len[sorted_idx]):
+                    bucket_ranges[bucket_idx, 0] = bucket_counter
+                    group_count = sum(1 for _ in g)
+                    bucket_ranges[bucket_idx, 1] = bucket_counter + group_count
+                    bucket_counter += group_count
+                    bucket_idx += 1
+
+                groups['train'] = bucket_ranges
+                splits['train'] = splits['train'][sorted_idx]
+
+                sent_len = (splits['valid'][:, 1] - splits['valid'][:, 0]).numpy()
+                sorted_idx = sent_len.argsort()
+                num_buckets = np.unique(sent_len).shape[0]
+                bucket_ranges = np.zeros([num_buckets, 2], dtype=np.int)
+                bucket_idx = 0
+                bucket_counter = 0
+                for k, g in it.groupby(sent_len[sorted_idx]):
+                    bucket_ranges[bucket_idx, 0] = bucket_counter
+                    group_count = sum(1 for _ in g)
+                    bucket_ranges[bucket_idx, 1] = bucket_counter + group_count
+                    bucket_counter += group_count
+                    bucket_idx += 1
+
+                groups['valid'] = bucket_ranges
+                splits['valid'] = splits['valid'][sorted_idx]
+
+                print('DONE')
 
             print('Counting words...', end='')
             vc = np.zeros(len(global_vocab), dtype=np.int32)
@@ -474,19 +514,38 @@ class StreamingH5CorpusLoader(object):
             unigram_probs[wtoi[cls.unk_token]] = 1. - unigram_probs.sum().item()
             print('DONE')
 
-            train_ds = cls(corpus,
-                           splits['train'],
-                           temp_vocab,
-                           wtoi,
-                           unigram_probs,
-                           device)
+            if group_by_len:
+                train_ds = cls(corpus,
+                               splits['train'],
+                               temp_vocab,
+                               wtoi,
+                               unigram_probs,
+                               torch.from_numpy(groups['train']),
+                               device)
 
-            valid_ds = cls(corpus,
-                           splits['valid'],
-                           temp_vocab,
-                           wtoi,
-                           unigram_probs,
-                           device)
+                valid_ds = cls(corpus,
+                               splits['valid'],
+                               temp_vocab,
+                               wtoi,
+                               unigram_probs,
+                               torch.from_numpy(groups['valid']),
+                               device)
+            else:
+                train_ds = cls(corpus,
+                               splits['train'],
+                               temp_vocab,
+                               wtoi,
+                               unigram_probs,
+                               None,
+                               device)
+
+                valid_ds = cls(corpus,
+                               splits['valid'],
+                               temp_vocab,
+                               wtoi,
+                               unigram_probs,
+                               None,
+                               device)
 
             return train_ds, valid_ds
 
@@ -496,12 +555,25 @@ class StreamingH5CorpusLoader(object):
                  vocab: List[str],
                  wtoi: Dict[str, int],
                  unigram_probs: torch.Tensor,
+                 groups: Union[None, torch.Tensor],
                  device: str = "cpu"):
         self.corpus = corpus
         self.sentences = sentences
         self.vocab = vocab
         self.wtoi = wtoi
         self.unigram_probs = unigram_probs
+        self.groups = groups
+        if groups is None:
+            self.group_indexing = False
+        else:
+            self.group_indexing = True
+            self.current_group = 0
+            self.group_selector = torch.ones(self.groups.shape[0])
+            self.group_offsets = torch.zeros(self.groups.shape[0], dtype=torch.long)
+            self.group_sent_len = torch.zeros(self.groups.shape[0], dtype=torch.long)
+            for i in range(self.groups.shape[0]):
+                sent_idx = self.groups[i][0]
+                self.group_sent_len[i] = self.sentences[sent_idx, 1] - self.sentences[sent_idx, 0]
         self.device = device
         self.current_iterating_order = None
         self.current_iterating_idx = 0
@@ -520,18 +592,71 @@ class StreamingH5CorpusLoader(object):
 
     def __iter__(self):
         if self.generate_iterating_order:
-            self.current_iterating_idx = 0
-            self.current_iterating_order = torch.randperm(self.sentences.shape[0])
-        for self.current_iterating_idx in range(self.current_iterating_idx, len(self)):
-            s_start, s_end = self.sentences[self.current_iterating_order[self.current_iterating_idx]]
-            ex_len = s_end - s_start
-            example = torch.zeros(ex_len + 2, dtype=torch.long).to(self.device)
-            example[0] = self.wtoi[self.bos_token]
-            example[-1] = self.wtoi[self.eos_token]
-            example[1:-1] = self.corpus[s_start:s_end]
-            yield example
+            if self.group_indexing:
+                self.group_selector = torch.ones(self.groups.shape[0])
+                self.group_offsets = torch.zeros(self.groups.shape[0], dtype=torch.long)
+                self.switch_group()
+                for i in range(self.group_selector.shape[0]):
+                    group_len = self.groups[i, 1] - self.groups[i, 0]
+                    shuffled_idx = torch.randperm(group_len) + self.groups[i, 0]
+                    self.sentences[self.groups[i, 0]:self.groups[i, 1]] = self.sentences[shuffled_idx]
+            else:
+                self.current_iterating_idx = 0
+                self.current_iterating_order = torch.randperm(self.sentences.shape[0])
+        if self.group_indexing:
+            while self.group_selector.sum() > 0:
+                self.current_iterating_idx = self.group_offsets.sum()
+                current_idx = self.groups[self.current_group, 0] + self.group_offsets[self.current_group]
+                self.group_offsets[self.current_group] += 1
+                if current_idx + 1 >= self.groups[self.current_group, 1]:
+                    self.group_selector[self.current_group] = 0
+                    new_group = self.__next_group()
+                    if new_group != -1:
+                        self.current_group = new_group
+                s_start, s_end = self.sentences[current_idx.item()]
+                ex_len = s_end - s_start
+                example = torch.zeros(ex_len + 2, dtype=torch.long).to(self.device)
+                example[0] = self.wtoi[self.bos_token]
+                example[-1] = self.wtoi[self.eos_token]
+                example[1:-1] = self.corpus[s_start:s_end]
+                yield example
+
+        else:
+            for self.current_iterating_idx in range(self.current_iterating_idx, len(self)):
+                s_start, s_end = self.sentences[self.current_iterating_order[self.current_iterating_idx]]
+                ex_len = s_end - s_start
+                example = torch.zeros(ex_len + 2, dtype=torch.long).to(self.device)
+                example[0] = self.wtoi[self.bos_token]
+                example[-1] = self.wtoi[self.eos_token]
+                example[1:-1] = self.corpus[s_start:s_end]
+                yield example
 
         self.generate_iterating_order = True
+
+    def __next_group(self):
+        available_groups = (self.group_selector == 1).nonzero().squeeze()
+        if available_groups.ndim > 0 and available_groups.shape[0] > 0:
+            closest_group_idx = (self.group_sent_len[available_groups] - self.group_sent_len[self.current_group]).abs().argsort().squeeze()[0]
+            return available_groups[closest_group_idx].item()
+        else:
+            return -1
+        # shifted = torch.cat([self.group_selector[self.current_group:], self.group_selector[:self.current_group]])
+        # idx = torch.arange(self.group_selector.shape[0])
+        # shifted_idx = torch.cat([idx[self.current_group:], idx[:self.current_group]])
+        # potential_next = (shifted == 1).nonzero().squeeze()
+        # if potential_next.shape[0] > 0:
+        #     return shifted_idx[potential_next[0]]
+        # else:
+        #     return -1
+
+    def switch_group(self):
+        if self.group_selector.sum() > 0:
+            self.current_group = self.group_selector.multinomial(1)
+        else:
+            self.current_group = -1
+
+    def retract_offset(self):
+        self.group_offsets[self.current_group] -= 1
 
     @property
     def mask_idx(self):
@@ -548,6 +673,32 @@ class StreamingH5CorpusLoader(object):
     @property
     def eos_idx(self):
         return self.wtoi[self.eos_token]
+
+    @property
+    def state(self):
+        if self.group_indexing:
+            state = {
+                'current_group_selector': self.group_selector,
+                'current_group_offsets': self.group_offsets.clone(),
+                'current_group': self.current_group
+            }
+        else:
+            state = {
+                'current_iterating_idx': self.current_iterating_idx,
+                'current_iterating_order': self.current_iterating_order,
+            }
+        return state
+
+    @state.setter
+    def state(self, state):
+        if self.group_indexing:
+            self.current_group = state['current_group']
+            self.group_selector = state['current_group_selector']
+            self.group_offsets = state['current_group_offsets']
+        else:
+            self.current_iterating_idx = state['current_iterating_idx']
+            self.current_iterating_order = state['current_iterating_order']
+
 
     def encode_sentence(self,
                         sentence: str):
@@ -980,7 +1131,11 @@ class StreamingBaseDataset(object):
                 current_longest_dec_in = 0
                 current_longest_enc_in = 0
                 current_longest_dec_out = 0
-                batch_trainable_token_count = 0
+                batch_trainable_token_count = enc_input.shape[0] + dec_input.shape[0]
+                if self.src_ds.group_indexing:
+                    self.src_ds.retract_offset()
+                    self.src_ds.switch_group()
+                    continue
 
             if enc_input.shape[0] > current_longest_enc_in:
                 current_longest_enc_in = enc_input.shape[0]

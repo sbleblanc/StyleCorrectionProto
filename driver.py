@@ -358,6 +358,7 @@ elif config['mode'] == 'pretrain_streaming':
         use_split_id=config['pretrain']['hd5']['valid_split_id'],
         forced_vocab=vocab,
         max_sent_len=config['pretrain']['max_sent_len'],
+        group_by_len=config['pretrain']['hd5']['group_by_len'],
         device=device
     )
     if config['pretrain']['algo'] == 'bart':
@@ -409,8 +410,12 @@ elif config['mode'] == 'pretrain_streaming':
         with open(model_save_fn, 'rb') as data_file:
             print('Loading from {}'.format(model_save_fn))
             loaded_data = torch.load(data_file, map_location='cpu')
-            cl_train.current_iterating_idx = loaded_data['current_iterating_idx']
-            cl_train.current_iterating_order = loaded_data['current_iterating_order']
+            if cl_train.group_indexing:
+                cl_train.state = {k: loaded_data[k] for k in ['current_group', 'current_group_selector', 'current_group_offsets'] if k in loaded_data}
+            else:
+                cl_train.state = {k: loaded_data[k] for k in
+                                  ['current_iterating_idx', 'current_iterating_order'] if
+                                  k in loaded_data}
             cl_train.generate_iterating_order = False
             optimizer.load_state_dict(loaded_data['optim_state_dict'])
             if in_multigpu_mode:
@@ -426,6 +431,8 @@ elif config['mode'] == 'pretrain_streaming':
 
     for i in range(config['pretrain']['max_epoch']):
         model.train()
+        if cl_train.group_indexing:
+            current_groups_offsets = cl_train.group_offsets.clone()
         for tbi, (t_enc_in, t_enc_in_key_mask, t_dec_out, t_dec_in, t_dec_in_key_mask, t_offsets) in enumerate(pds_train):
 
             if tbi % config['eval']['interval'] == 0:
@@ -473,22 +480,19 @@ elif config['mode'] == 'pretrain_streaming':
                     if valid_loss_mean < best_valid_loss:
                         save_fn = os.path.expandvars(config['pretrain']['best_model_save_fn'])
                         with open(save_fn, 'wb') as out_file:
-                            if in_multigpu_mode:
-                                to_save = {
-                                    'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
-                                    'current_iterating_order': cl_train.current_iterating_order,
-                                    'model_state_dict': model.module.model.state_dict(),
-                                    'optim_state_dict': optimizer.state_dict(),
-                                    'best_valid_loss': valid_loss_mean
-                                }
+                            to_save = {
+                                'optim_state_dict': optimizer.state_dict(),
+                                'best_valid_loss': valid_loss_mean
+                            }
+                            to_save.update(cl_train.state)
+                            if cl_train.group_indexing:
+                                to_save['current_group_offsets'] = current_groups_offsets
                             else:
-                                to_save = {
-                                    'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
-                                    'current_iterating_order': cl_train.current_iterating_order,
-                                    'model_state_dict': model.state_dict(),
-                                    'optim_state_dict': optimizer.state_dict(),
-                                    'best_valid_loss': valid_loss_mean
-                                }
+                                to_save['current_iterating_idx'] -= t_enc_in.shape[0]
+                            if in_multigpu_mode:
+                                to_save['model_state_dict'] = model.module.model.state_dict()
+                            else:
+                                to_save['model_state_dict'] = model.state_dict()
                             torch.save(to_save, out_file)
                         patience_counter = 0
                         best_valid_loss = valid_loss_mean
@@ -497,22 +501,19 @@ elif config['mode'] == 'pretrain_streaming':
 
                     save_fn = os.path.expandvars(config['pretrain']['current_model_save_fn'])
                     with open(save_fn, 'wb') as out_file:
-                        if in_multigpu_mode:
-                            to_save = {
-                                'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
-                                'current_iterating_order': cl_train.current_iterating_order,
-                                'model_state_dict': model.module.model.state_dict(),
-                                'optim_state_dict': optimizer.state_dict(),
-                                'best_valid_loss': best_valid_loss
-                            }
+                        to_save = {
+                            'optim_state_dict': optimizer.state_dict(),
+                            'best_valid_loss': best_valid_loss
+                        }
+                        to_save.update(cl_train.state)
+                        if cl_train.group_indexing:
+                            to_save['current_group_offsets'] = current_groups_offsets
                         else:
-                            to_save = {
-                                'current_iterating_idx': cl_train.current_iterating_idx - t_enc_in.shape[0],
-                                'current_iterating_order': cl_train.current_iterating_order,
-                                'model_state_dict': model.state_dict(),
-                                'optim_state_dict': optimizer.state_dict(),
-                                'best_valid_loss': best_valid_loss
-                            }
+                            to_save['current_iterating_idx'] -= t_enc_in.shape[0]
+                        if in_multigpu_mode:
+                            to_save['model_state_dict'] = model.module.model.state_dict()
+                        else:
+                            to_save['model_state_dict'] = model.state_dict()
                         torch.save(to_save, out_file)
 
                 train_losses.clear()
@@ -528,6 +529,7 @@ elif config['mode'] == 'pretrain_streaming':
             loss.backward()
             train_losses.append(loss.item())
             optimizer.step()
+            current_groups_offsets = cl_train.group_offsets.clone()
 
         if patience_counter > config['pretrain']['valid_patience']:
             print('Patience threshold reached')
