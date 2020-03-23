@@ -413,7 +413,7 @@ class StreamingH5CorpusLoader(object):
                 sent_len = sentences[:, 1] - sentences[:, 0]
                 to_keep = (sent_len <= max_sent_len).numpy()
                 splits['valid'] = sentences[(valid_selector & to_keep).nonzero()[0]]
-                splits['train'] = sentences[(1 - (valid_selector & to_keep)).nonzero()[0]]
+                splits['train'] = sentences[((1 - valid_selector) & to_keep).nonzero()[0]]
             else:
                 splits['valid'] = sentences[valid_selector.nonzero()[0]]
                 splits['train'] = sentences[(1-valid_selector).nonzero()[0]]
