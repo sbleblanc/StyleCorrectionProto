@@ -550,10 +550,15 @@ elif config['mode'] == 'finetune_streaming':
     vocab_h5_fn = os.path.expandvars(os.path.expandvars(config['finetune']['hd5']['vocab']['h5_fn']))
     with h5py.File(vocab_h5_fn, 'r') as h5_file:
         vocab = h5_file['vocab'][:]
+        if 'additional_special_tokens' in h5_file['vocab'].attrs:
+            additional_special_tokens = h5_file['vocab'].attrs['additional_special_tokens']
+            vocab_special_chars = vocab[5:5 + additional_special_tokens].tolist()
+        else:
+            vocab_special_chars = []
     cl_direct_noise_train, cl_direct_noise_valid = StreamingH5CorpusLoader.load_and_split(
         h5_fn_finetune,
         use_split_id=config['finetune']['hd5']['finetune']['valid_split_id'],
-        forced_vocab=vocab,
+        forced_vocab=(vocab, vocab_special_chars),
         smoothing_alpha=config['finetune']['hd5']['finetune']['smoothing_alpha'],
         max_sent_len=config['finetune']['max_sent_len']
     )
