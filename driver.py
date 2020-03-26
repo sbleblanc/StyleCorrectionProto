@@ -586,14 +586,14 @@ elif config['mode'] == 'finetune_streaming':
 
     elif config['finetune']['dataset']['to_use'] == 'parallel':
         dnds_train = StreamingParallelDataset(cl_direct_noise_train,
-                                              split_token=config['finetune']['dataset']['to_use']['split_token'],
-                                              tokens_per_batch=config['finetune']['dataset']['to_use']['tpb'],
-                                              max_trainable_tokens=config['finetune']['dataset']['to_use']['tpb'],
+                                              split_token=config['finetune']['dataset']['parallel']['split_token'],
+                                              tokens_per_batch=config['finetune']['dataset']['parallel']['tpb'],
+                                              max_trainable_tokens=config['finetune']['dataset']['parallel']['tpb'],
                                               device=device)
         dnds_valid = StreamingParallelDataset(cl_direct_noise_valid,
-                                              split_token=config['finetune']['dataset']['to_use']['split_token'],
-                                              tokens_per_batch=config['finetune']['dataset']['to_use']['tpb'],
-                                              max_trainable_tokens=config['finetune']['dataset']['to_use']['tpb'],
+                                              split_token=config['finetune']['dataset']['parallel']['split_token'],
+                                              tokens_per_batch=config['finetune']['dataset']['parallel']['tpb'],
+                                              max_trainable_tokens=config['finetune']['dataset']['parallel']['tpb'],
                                               device=device)
     else:
         pass
