@@ -315,12 +315,14 @@ class StreamingH5CorpusLoader(object):
                                tokenize: Callable[[str], List[str]],
                                preprocess: Callable[[str], str] = None,
                                topk: int = 0,
-                               max_len: int = 175):
+                               max_len: int = 175,
+                               additional_special_token: List[str] = []):
         vocab = [cls.mask_token,
                  cls.pad_token,
                  cls.unk_token,
                  cls.bos_token,
                  cls.eos_token]
+        vocab.extend(additional_special_token)
         wtoi = dict([(w, i) for i, w in enumerate(vocab)])
         with tarfile.open(corpus_tar_gz, 'r:gz', ignore_zeros=True) as tar_file:
             books = tar_file.getmembers()
@@ -351,6 +353,9 @@ class StreamingH5CorpusLoader(object):
                 start_len_ds = h5_file.create_dataset('sentences', (sent_count, 2), dtype='u4')
                 vocab_ds = h5_file.create_dataset('vocab', (len(vocab),), dtype=dt)
                 vocab_ds[:] = vocab
+
+                if len(additional_special_token) > 0:
+                    vocab_ds.attrs['additional_special_tokens'] = len(additional_special_token)
 
                 position = 0
                 line = 0
@@ -394,9 +399,9 @@ class StreamingH5CorpusLoader(object):
                        h5_fn: str,
                        use_split_id: int = 0,
                        vocab_topk: int = 0,
-                       min_freq: int = 2,
+                       min_freq: int = 0,
                        max_sent_len: int = 0,
-                       forced_vocab: List[str] = None,
+                       forced_vocab: Tuple[List[str], List[str]] = None,
                        smoothing_alpha: float = 0.,
                        group_by_len: bool = False,
                        device: str = "cpu"):
@@ -459,10 +464,13 @@ class StreamingH5CorpusLoader(object):
                 print('DONE')
 
             print('Counting words...', end='')
+            additional_special_tokens = 0
+            if 'additional_special_tokens' in h5_file['vocab'].attrs:
+                additional_special_tokens = int(h5_file['vocab'].attrs['additional_special_tokens'])
             vc = np.zeros(len(global_vocab), dtype=np.int32)
             cu.count_words(corpus.numpy(), splits['train'].numpy(), vc)
             vc = torch.from_numpy(vc)
-            vocab_counter = Counter(dict([(i, vc[i].item()) for i in range(5, vc.shape[0])]))
+            vocab_counter = Counter(dict([(i, vc[i].item()) for i in range(5 + additional_special_tokens, vc.shape[0])]))
             total_count = vc.sum()
             del vc
             if vocab_topk == 0:
@@ -474,28 +482,34 @@ class StreamingH5CorpusLoader(object):
             print('DONE')
 
             print('Building vocabulary and mappings...', end='')
+            temp_vocab_special_offset = additional_special_tokens
             if forced_vocab is not None:
                 global_wtoi = dict([(w, i) for i, w in enumerate(global_vocab)])
-                temp_vocab = forced_vocab
+                forced_vocab_additional_special_tokens = len(forced_vocab[1])
+                temp_vocab = np.empty(forced_vocab[0].shape[0] + additional_special_tokens, dtype=forced_vocab[0].dtype)
+                temp_vocab[:5+forced_vocab_additional_special_tokens] = forced_vocab[0][:5+forced_vocab_additional_special_tokens]
+                temp_vocab[5+forced_vocab_additional_special_tokens:5+forced_vocab_additional_special_tokens+additional_special_tokens] = global_vocab[5:5+additional_special_tokens]
+                temp_vocab[5+forced_vocab_additional_special_tokens+additional_special_tokens:] = forced_vocab[0][5+forced_vocab_additional_special_tokens:]
                 wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
                 gtr_mapping = torch.empty(len(global_vocab), dtype=torch.int).fill_(wtoi[cls.unk_token])
                 diff_counter = 0
-                for i, w in enumerate(temp_vocab[5:]):
+                for i, w in enumerate(temp_vocab[5 + forced_vocab_additional_special_tokens:]):
                     if w in global_wtoi:
-                        gtr_mapping[global_wtoi[w]] = i + 5
+                        gtr_mapping[global_wtoi[w]] = i + 5 + forced_vocab_additional_special_tokens
                     else:
                         diff_counter += 1
-                print('Forced vocab : {}/{} words not present'.format(diff_counter, len(temp_vocab) - 5))
+                print('Forced vocab : {}/{} words not present'.format(diff_counter, len(temp_vocab) - 5 - forced_vocab_additional_special_tokens))
                 # gtr_mapping = dict([(global_wtoi[w], i + 5) for i, w in enumerate(temp_vocab[5:]) if w in global_wtoi])
-                rtg_mapping = dict([(i + 5, global_wtoi[w]) for i, w in enumerate(temp_vocab[5:]) if w in global_wtoi])
+                rtg_mapping = dict([(i + 5 + forced_vocab_additional_special_tokens, global_wtoi[w]) for i, w in enumerate(temp_vocab[5 + forced_vocab_additional_special_tokens:]) if w in global_wtoi])
+                temp_vocab_special_offset += forced_vocab_additional_special_tokens
             else:
-                temp_vocab = list(global_vocab[:5])
+                temp_vocab = list(global_vocab[:5 + additional_special_tokens])
                 temp_vocab.extend([global_vocab[w] for w, _ in top_vocab_count])
                 wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
                 gtr_mapping = torch.empty(len(global_vocab), dtype=torch.int).fill_(wtoi[cls.unk_token])
                 for i, (wi, _) in enumerate(top_vocab_count):
-                    gtr_mapping[wi] = i + 5
-                rtg_mapping = dict([(i + 5, wi) for i, (wi, _) in enumerate(top_vocab_count)])
+                    gtr_mapping[wi] = i + 5 + additional_special_tokens
+                rtg_mapping = dict([(i + 5 + additional_special_tokens, wi) for i, (wi, _) in enumerate(top_vocab_count)])
 
             print('DONE')
 
@@ -506,8 +520,8 @@ class StreamingH5CorpusLoader(object):
             print('Computing unigram probabilities...', end='')
             unigram_probs = torch.zeros(len(temp_vocab)).to(device)
             smoothing = torch.empty(len(temp_vocab)).fill_(smoothing_alpha).to(device)
-            smoothing[:5] = 0
-            for i in range(5, len(temp_vocab)):
+            smoothing[:5 + temp_vocab_special_offset] = 0
+            for i in range(5 + temp_vocab_special_offset, len(temp_vocab)):
                 if i in rtg_mapping:
                     unigram_probs[i] = vocab_counter[rtg_mapping[i]]
             unigram_probs = (unigram_probs + smoothing) / (total_count + smoothing.sum())
@@ -518,6 +532,7 @@ class StreamingH5CorpusLoader(object):
                 train_ds = cls(corpus,
                                splits['train'],
                                temp_vocab,
+                               temp_vocab_special_offset,
                                wtoi,
                                unigram_probs,
                                torch.from_numpy(groups['train']),
@@ -526,6 +541,7 @@ class StreamingH5CorpusLoader(object):
                 valid_ds = cls(corpus,
                                splits['valid'],
                                temp_vocab,
+                               temp_vocab_special_offset,
                                wtoi,
                                unigram_probs,
                                torch.from_numpy(groups['valid']),
@@ -534,6 +550,7 @@ class StreamingH5CorpusLoader(object):
                 train_ds = cls(corpus,
                                splits['train'],
                                temp_vocab,
+                               temp_vocab_special_offset,
                                wtoi,
                                unigram_probs,
                                None,
@@ -542,6 +559,7 @@ class StreamingH5CorpusLoader(object):
                 valid_ds = cls(corpus,
                                splits['valid'],
                                temp_vocab,
+                               temp_vocab_special_offset,
                                wtoi,
                                unigram_probs,
                                None,
@@ -553,6 +571,7 @@ class StreamingH5CorpusLoader(object):
                  corpus: torch.Tensor,
                  sentences: torch.Tensor,
                  vocab: List[str],
+                 additional_special_tokens: int,
                  wtoi: Dict[str, int],
                  unigram_probs: torch.Tensor,
                  groups: Union[None, torch.Tensor],
@@ -560,6 +579,7 @@ class StreamingH5CorpusLoader(object):
         self.corpus = corpus
         self.sentences = sentences
         self.vocab = vocab
+        self.additional_special_tokens = additional_special_tokens
         self.wtoi = wtoi
         self.unigram_probs = unigram_probs
         self.groups = groups
@@ -586,6 +606,7 @@ class StreamingH5CorpusLoader(object):
             prob_ds = h5_file.create_dataset('unigram_prob', (len(self.vocab),), dtype=np.float)
             vocab_ds[:] = self.vocab
             prob_ds[:] = self.unigram_probs
+            vocab_ds.attrs['additional_special_tokens'] = self.additional_special_tokens
 
     def __len__(self):
         return self.sentences.shape[0]
@@ -1269,6 +1290,30 @@ class StreamingBARTPretrainingDataset(StreamingBaseDataset):
             example_idx = mask_start + samples[i]
         masked_example[masked_example_idx:-1] = example[example_idx:-1]
         return masked_example, example[:-1], example[1:], None
+
+
+class StreamingParallelDataset(StreamingBaseDataset):
+
+    def __init__(self,
+                 src_ds: StreamingH5CorpusLoader,
+                 split_token: str = '<split>',
+                 tokens_per_batch: int = 1000,
+                 max_trainable_tokens: int = 1000,
+                 device: str = "cpu"):
+        super(StreamingParallelDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch, max_trainable_tokens=max_trainable_tokens, device=device)
+        self.split_idx = src_ds.wtoi[split_token]
+
+    def process_example(self, example: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        split_position = (example == self.split_idx).nonzero()[0][0].item()
+        dirty_example = torch.empty(split_position + 1, dtype=torch.long)
+        clean_example_input = torch.empty(split_position, dtype=torch.long)
+        dirty_example[:-1] = example[:split_position]
+        dirty_example[-1] = self.src_ds.eos_idx
+        clean_example_input[1:] = example[split_position+1:-1]
+        clean_example_input[0] = self.src_ds.bos_idx
+        clean_example_output = example[split_position+1:]
+
+        return dirty_example, clean_example_input, clean_example_output, None
 
 # class StreamingCANoiseDataset(object):
 #

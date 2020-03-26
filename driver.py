@@ -70,21 +70,25 @@ if config['mode'] == 'eval':
 
 if config['mode'] == 'hd5_gen':
     print('Creating hd5 dataset...')
+    additional_tokens = []
+    if config['hd5_gen']['additional_tokens'] is not None:
+        additional_tokens = config['hd5_gen']['additional_tokens']
     h5_fn = os.path.expandvars(config['hd5_gen']['h5_fn'])
-    H5CorpusLoader.create_from_compressed(
+    StreamingH5CorpusLoader.create_from_compressed(
         h5_fn,
         os.path.expandvars(config['hd5_gen']['corpus_tar_gz']),
         lambda x: x.strip().split(' '),
         lambda x: x.lower(),
         config['hd5_gen']['topk'],
-        config['hd5_gen']['max_len']
+        config['hd5_gen']['max_len'],
+        additional_tokens
     )
     print('DONE')
 
 elif config['mode'] == 'gen_split':
     print('Generating train/valid split...')
     h5_fn = os.path.expandvars(config['gen_split']['h5_fn'])
-    H5CorpusLoader.generate_split(
+    StreamingH5CorpusLoader.generate_split(
         h5_fn,
         config['gen_split']['valid_ratio']
     )
@@ -94,13 +98,13 @@ elif config['mode'] == 'vocab_dump':
     print('Starting vocab dumping...')
     corpus_h5_fn = os.path.expandvars(config['vocab_dump']['corpus_h5_fn'])
     vocab_h5_fn = os.path.expandvars(config['vocab_dump']['vocab_h5_fn'])
-    cl = H5CorpusLoader.load_and_split(
+    cl = StreamingH5CorpusLoader.load_and_split(
         corpus_h5_fn,
         config['vocab_dump']['valid_split_id'],
         config['vocab_dump']['vocab_topk'],
         config['vocab_dump']['min_freq'],
         device=device
-    )
+    )[0]
     cl.dump_vocab(vocab_h5_fn)
     print('DONE')
 
@@ -353,10 +357,15 @@ elif config['mode'] == 'pretrain_streaming':
     vocab_h5_fn = os.path.expandvars(config['pretrain']['hd5']['vocab_fn'])
     with h5py.File(vocab_h5_fn, 'r') as h5_file:
         vocab = h5_file['vocab'][:]
+        if 'additional_special_tokens' in h5_file['vocab'].attrs:
+            additional_special_tokens = h5_file['vocab'].attrs['additional_special_tokens']
+            vocab_special_chars = vocab[5:5+additional_special_tokens].tolist()
+        else:
+            vocab_special_chars = []
     cl_train, cl_valid = StreamingH5CorpusLoader.load_and_split(
         corpus_h5_fn,
         use_split_id=config['pretrain']['hd5']['valid_split_id'],
-        forced_vocab=vocab,
+        forced_vocab=(vocab, vocab_special_chars),
         max_sent_len=config['pretrain']['max_sent_len'],
         group_by_len=config['pretrain']['hd5']['group_by_len'],
         device=device
@@ -569,6 +578,18 @@ elif config['mode'] == 'finetune_streaming':
                                              tokens_per_batch=config['finetune']['dataset']['ca']['tpb'],
                                              max_trainable_tokens=config['finetune']['dataset']['ca']['mttpb'],
                                              device=device)
+
+    elif config['finetune']['dataset']['to_use'] == 'parallel':
+        dnds_train = StreamingParallelDataset(cl_direct_noise_train,
+                                              split_token=config['finetune']['dataset']['to_use']['split_token'],
+                                              tokens_per_batch=config['finetune']['dataset']['to_use']['tpb'],
+                                              max_trainable_tokens=config['finetune']['dataset']['to_use']['tpb'],
+                                              device=device)
+        dnds_valid = StreamingParallelDataset(cl_direct_noise_valid,
+                                              split_token=config['finetune']['dataset']['to_use']['split_token'],
+                                              tokens_per_batch=config['finetune']['dataset']['to_use']['tpb'],
+                                              max_trainable_tokens=config['finetune']['dataset']['to_use']['tpb'],
+                                              device=device)
     else:
         pass
         # dnds = DirectNoiseDataset(cl_direct_noise,
