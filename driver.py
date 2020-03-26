@@ -605,7 +605,7 @@ elif config['mode'] == 'finetune_streaming':
         #                           device=device)
 
     model = TransformerS2S(
-        len(vocab),
+        len(cl_direct_noise_valid.vocab),
         config['TransformerS2S']['emb_dim'],
         config['TransformerS2S']['n_head'],
         config['TransformerS2S']['ff_dim'],
