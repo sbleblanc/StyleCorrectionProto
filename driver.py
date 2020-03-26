@@ -605,7 +605,7 @@ elif config['mode'] == 'finetune_streaming':
         #                           device=device)
 
     model = TransformerS2S(
-        len(cl_direct_noise_valid.vocab),
+        len(vocab),
         config['TransformerS2S']['emb_dim'],
         config['TransformerS2S']['n_head'],
         config['TransformerS2S']['ff_dim'],
@@ -617,7 +617,7 @@ elif config['mode'] == 'finetune_streaming':
 
     if config['multi_gpu'] and torch.cuda.device_count() > 1:
         in_multigpu_mode = True
-        model = DataParallelCELWrapper(model, criterion, len(cl_direct_noise_train.vocab))
+        model = DataParallelCELWrapper(model, criterion, len(vocab))
         model = nn.DataParallel(model)
     else:
         in_multigpu_mode = False
@@ -682,7 +682,7 @@ elif config['mode'] == 'finetune_streaming':
                             loss = loss.mean()
                         else:
                             out = model(v_noised_batch, v_eos_trunc, v_input_key_mask, v_output_key_mask, None)
-                            loss = criterion(out.contiguous().view(-1, len(cl_direct_noise_valid.vocab)), v_bos_trunc.view(-1))
+                            loss = criterion(out.contiguous().view(-1, len(vocab)), v_bos_trunc.view(-1))
                         valid_losses.append(loss.item())
                         if vbi == config['eval']['num_valid_batch']:
                             break
@@ -765,7 +765,7 @@ elif config['mode'] == 'finetune_streaming':
                 loss = loss.mean()
             else:
                 out = model(t_noised_batch, t_eos_trunc, t_input_key_mask, t_output_key_mask, None)
-                loss = criterion(out.contiguous().view(-1, len(cl_direct_noise_train.vocab)), t_bos_trunc.view(-1))
+                loss = criterion(out.contiguous().view(-1, len(vocab)), t_bos_trunc.view(-1))
             loss.backward()
             train_losses.append(loss.item())
             optimizer.step()
