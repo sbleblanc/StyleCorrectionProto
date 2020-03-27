@@ -1297,21 +1297,32 @@ class StreamingParallelDataset(StreamingBaseDataset):
     def __init__(self,
                  src_ds: StreamingH5CorpusLoader,
                  split_token: str = '<split>',
+                 reverse: bool = False,
                  tokens_per_batch: int = 1000,
                  max_trainable_tokens: int = 1000,
                  device: str = "cpu"):
         super(StreamingParallelDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch, max_trainable_tokens=max_trainable_tokens, device=device)
+        self.reverse = reverse
         self.split_idx = src_ds.wtoi[split_token]
 
     def process_example(self, example: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         split_position = (example == self.split_idx).nonzero()[0][0].item()
-        dirty_example = torch.empty(split_position + 1, dtype=torch.long)
-        clean_example_input = torch.empty(example.shape[0] - split_position - 1, dtype=torch.long)
-        dirty_example[:-1] = example[:split_position]
-        dirty_example[-1] = self.src_ds.eos_idx
-        clean_example_input[1:] = example[split_position+1:-1]
-        clean_example_input[0] = self.src_ds.bos_idx
-        clean_example_output = example[split_position+1:]
+        if self.reverse:
+            dirty_example = torch.empty(example.shape[0] - split_position + 1, dtype=torch.long)
+            clean_example_output = torch.empty(split_position, dtype=torch.long)
+            dirty_example[1:] = example[split_position+1:]
+            dirty_example[0] = self.src_ds.bos_idx
+            clean_example_input = example[:split_position]
+            clean_example_output[:-1] = example[1:]
+            clean_example_output[-1] = self.src_ds.eos_idx
+        else:
+            dirty_example = torch.empty(split_position + 1, dtype=torch.long)
+            clean_example_input = torch.empty(example.shape[0] - split_position - 1, dtype=torch.long)
+            dirty_example[:-1] = example[:split_position]
+            dirty_example[-1] = self.src_ds.eos_idx
+            clean_example_input[1:] = example[split_position+1:-1]
+            clean_example_input[0] = self.src_ds.bos_idx
+            clean_example_output = example[split_position+1:]
 
         return dirty_example, clean_example_input, clean_example_output, None
 
