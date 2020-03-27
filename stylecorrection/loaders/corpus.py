@@ -1313,7 +1313,7 @@ class StreamingParallelDataset(StreamingBaseDataset):
             dirty_example[1:] = example[split_position+1:]
             dirty_example[0] = self.src_ds.bos_idx
             clean_example_input = example[:split_position]
-            clean_example_output[:-1] = example[1:]
+            clean_example_output[:-1] = example[1:split_position]
             clean_example_output[-1] = self.src_ds.eos_idx
         else:
             dirty_example = torch.empty(split_position + 1, dtype=torch.long)
