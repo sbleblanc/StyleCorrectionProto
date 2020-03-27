@@ -41,7 +41,7 @@ if config['mode'] == 'eval':
     )[0]
 
     model = TransformerS2S(
-        len(cl.vocab),
+        len(vocab),
         config['TransformerS2S']['emb_dim'],
         config['TransformerS2S']['n_head'],
         config['TransformerS2S']['ff_dim'],
@@ -83,7 +83,7 @@ if config['mode'] == 'hd5_gen':
         h5_fn,
         os.path.expandvars(config['hd5_gen']['corpus_tar_gz']),
         lambda x: x.strip().split(' '),
-        lambda x: x.lower(),
+        None,
         config['hd5_gen']['topk'],
         config['hd5_gen']['max_len'],
         additional_tokens
