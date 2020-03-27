@@ -659,7 +659,7 @@ elif config['mode'] == 'finetune_streaming':
             else:
                 model.load_state_dict(loaded_data['model_state_dict'])
             if "best_valid_loss" in loaded_data:
-                best_valid_loss = loaded_data['best_valid']
+                best_valid_loss = loaded_data['best_valid_loss']
 
     model_fn = os.path.expandvars(config['finetune']['pretrain_model_fn'])
     with open(model_fn, 'rb') as in_file:
