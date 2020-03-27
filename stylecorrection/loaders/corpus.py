@@ -1308,7 +1308,7 @@ class StreamingParallelDataset(StreamingBaseDataset):
     def process_example(self, example: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         split_position = (example == self.split_idx).nonzero()[0][0].item()
         if self.reverse:
-            dirty_example = torch.empty(example.shape[0] - split_position + 1, dtype=torch.long)
+            dirty_example = torch.empty(example.shape[0] - split_position, dtype=torch.long)
             clean_example_output = torch.empty(split_position, dtype=torch.long)
             dirty_example[1:] = example[split_position+1:]
             dirty_example[0] = self.src_ds.bos_idx
