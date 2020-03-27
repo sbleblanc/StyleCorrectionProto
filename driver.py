@@ -27,13 +27,18 @@ if config['mode'] == 'eval':
     vocab_path = os.path.expandvars(config['manual_eval']['h5']['vocab'])
     with h5py.File(vocab_path, 'r') as h5_file:
         vocab = h5_file['vocab'][:]
+        if 'additional_special_tokens' in h5_file['vocab'].attrs:
+            additional_special_tokens = h5_file['vocab'].attrs['additional_special_tokens']
+            vocab_special_chars = vocab[5:5 + additional_special_tokens].tolist()
+        else:
+            vocab_special_chars = []
 
     ft_corpus_path = os.path.expandvars(config['manual_eval']['h5']['ft_corpus'])
-    cl = H5CorpusLoader.load_and_split(
+    cl = StreamingH5CorpusLoader.load_and_split(
         ft_corpus_path,
         use_split_id=config['manual_eval']['h5']['ft_corpus_split'],
-        forced_vocab=vocab
-    )
+        forced_vocab=(vocab, vocab_special_chars)
+    )[0]
 
     model = TransformerS2S(
         len(cl.vocab),
