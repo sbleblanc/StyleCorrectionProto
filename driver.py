@@ -565,7 +565,8 @@ elif config['mode'] == 'finetune_streaming':
         use_split_id=config['finetune']['hd5']['finetune']['valid_split_id'],
         forced_vocab=(vocab, vocab_special_chars),
         smoothing_alpha=config['finetune']['hd5']['finetune']['smoothing_alpha'],
-        max_sent_len=config['finetune']['max_sent_len']
+        max_sent_len=config['finetune']['max_sent_len'],
+        group_by_len=config['finetune']['group_by_len']
     )
     if config['finetune']['dataset']['to_use'] == 'ca':
         dnds_train = StreamingCANoiseDataset(cl_direct_noise_train,
