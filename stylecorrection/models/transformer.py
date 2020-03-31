@@ -67,13 +67,66 @@ class TransformerS2S(nn.Module):
         encoded = self.encode(enc_input, input_key_mask)
         return self.decode(encoded, input_key_mask, dec_input, output_key_mask, out_offsets)
 
+    def beam_decode_2(self,
+                      input: torch.Tensor,
+                      output_seed: torch.Tensor,
+                      beam_width: int = 5,
+                      max_len: int = 175,
+                      end_token: int = -1,
+                      noising_beta: float = 0.,
+                      top_only: bool = True,
+                      device: str = 'cpu'):
+        if input.ndim == 1:
+            input = input.unsqueeze(0)
+
+        completed_beams = []
+        encoded_input = self.encode(input, None)
+        scores = torch.zeros(1).to(device)
+        candidates = output_seed.unsqueeze(0)
+        with torch.no_grad():
+            for pi in range(max_len):
+                decoded = self.decode(encoded_input.repeat_interleave(candidates.shape[0], 1), None, candidates, None, None)
+                probs, indices = nn.functional.log_softmax(decoded, dim=-1).sort(dim=-1, descending=True)
+                probs = probs[:, -1, :beam_width]
+                indices = indices[:, -1, :beam_width]
+                temp_scores = scores.repeat_interleave(beam_width).view(-1, beam_width) + probs
+                if noising_beta > 0.:
+                    noise = torch.rand_like(temp_scores) * noising_beta
+                    temp_scores = (temp_scores.exp() - noise).max(torch.tensor([0.]).to(device)).log()
+                final_scores, final_indices = temp_scores.view(-1).sort(descending=True)
+                scores = final_scores[:beam_width]
+                candidates_previous = final_indices[:beam_width] // beam_width
+                new_candidates = torch.zeros(beam_width, pi+2, dtype=torch.long).to(device)
+                new_candidates[:, :-1] = candidates[candidates_previous]
+                new_candidates[:, -1] = indices.contiguous().view(-1)[final_indices[:beam_width]]
+                potential_finished = new_candidates[:, -1] == end_token
+                finished = potential_finished.nonzero().view(-1)
+                unfinished = (~potential_finished).nonzero().view(-1)
+                candidates = new_candidates[unfinished]
+                for idx in finished:
+                    completed_beams.append((scores[idx].item(), new_candidates[idx].cpu()))
+                    if len(completed_beams) == beam_width:
+                        break
+                scores = scores[unfinished]
+                if candidates.ndim == 0 or len(completed_beams) == beam_width:
+                    break
+
+        if len(completed_beams) != beam_width:
+            for i in range(beam_width - len(completed_beams)):
+                completed_beams.append((scores[i].item(), candidates[i]))
+
+        completed_beams = sorted(completed_beams, key=lambda x: x[0], reverse=True)
+        return [b for s, b in completed_beams]
+
+
     def beam_decode(self,
                     input: torch.Tensor,
                     output_seed: torch.Tensor,
                     beam_width: int = 5,
                     max_len: int = 175,
                     end_token: int = -1,
-                    position_offset: int = 0,
+                    noising_beta: float = 0.,
+                    top_only: bool = True,
                     device: str = 'cpu'):
         if input.ndim == 1:
             input = input.unsqueeze(0)
@@ -91,7 +144,14 @@ class TransformerS2S(nn.Module):
                 t_candidate = torch.tensor(candidate, dtype=torch.long).unsqueeze(0).to(device)
                 decoded = self.decode(encoded_input, None, t_candidate, None, None)
                 probs, indices = nn.functional.log_softmax(decoded, dim=-1).sort(dim=-1, descending=True)
-                for p, vi in zip(probs[0, -1, :beam_width], indices[0, -1, :beam_width]):
+                probs = probs[0, -1, :beam_width]
+                indices = indices[0, -1, :beam_width]
+                if noising_beta > 0.:
+                    noise = torch.rand_like(probs) * noising_beta
+                    probs = (probs.exp() + noise).log()
+                    probs, resorted_indices = probs.sort(dim=-1, descending=True)
+                    indices = indices[resorted_indices]
+                for p, vi in zip(probs, indices):
                     potential_candidates.append((p.item() + prob, candidate + [vi.item()]))
 
             candidates.clear()
@@ -110,4 +170,7 @@ class TransformerS2S(nn.Module):
 
         final_candidates = sorted(final_candidates, key=lambda x: x[0], reverse=True)
 
-        return final_candidates[0][1]
+        if top_only:
+            return final_candidates[0][1]
+        else:
+            return [torch.tensor(t) for p, t in final_candidates]

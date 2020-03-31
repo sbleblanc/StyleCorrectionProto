@@ -742,6 +742,8 @@ class StreamingH5CorpusLoader(object):
             sent = []
             for w in t[i]:
                 vocab_token = self.vocab[w.item()]
+                if vocab_token == self.bos_token or vocab_token == self.eos_token:
+                    continue
                 sent.append(vocab_token)
                 if vocab_token == self.eos_token:
                     break

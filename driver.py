@@ -8,7 +8,8 @@ import torch.optim as optim
 from stylecorrection.loaders.corpus import *
 from stylecorrection.models.wrappers import *
 from stylecorrection.models.transformer import TransformerS2S
-from stylecorrection.utils.evaluation import compute_scores
+import spacy
+import fastBPE
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -664,14 +665,15 @@ elif config['mode'] == 'finetune_streaming':
             if "best_valid_loss" in loaded_data:
                 best_valid_loss = loaded_data['best_valid_loss']
 
-    model_fn = os.path.expandvars(config['finetune']['pretrain_model_fn'])
-    with open(model_fn, 'rb') as in_file:
-        loaded_data = torch.load(in_file, map_location=device)
-        if in_multigpu_mode:
-            model.module.model.load_state_dict(loaded_data['model_state_dict'])
-        else:
-            model.load_state_dict(loaded_data['model_state_dict'])
-        loaded_data = None
+    if config['finetune']['pretrain_model_fn'] is not None:
+        model_fn = os.path.expandvars(config['finetune']['pretrain_model_fn'])
+        with open(model_fn, 'rb') as in_file:
+            loaded_data = torch.load(in_file, map_location=device)
+            if in_multigpu_mode:
+                model.module.model.load_state_dict(loaded_data['model_state_dict'])
+            else:
+                model.load_state_dict(loaded_data['model_state_dict'])
+            loaded_data = None
 
     train_losses = []
 
@@ -777,3 +779,84 @@ elif config['mode'] == 'finetune_streaming':
             loss.backward()
             train_losses.append(loss.item())
             optimizer.step()
+
+elif config['mode'] == 'debug':
+
+    nlp = spacy.load('en', disable=['tagger', 'parser', 'ner', 'entity_linker', 'textcat', 'entity_ruler', 'sentencizer', 'merge_noun_chunks', 'merge_entities', 'merge_subtokens'])
+    bpe = fastBPE.fastBPE('temp/datasets/bcu_enwiki.30000.codes', 'temp/datasets/bcu_enwiki_spacy.30000.bpe.vocab')
+    # device = 'cpu'
+
+    vocab_path = 'temp/datasets/bcu_enwiki_30000_bpe_vocab.h5'
+    with h5py.File(vocab_path, 'r') as h5_file:
+        vocab = h5_file['vocab'][:]
+        if 'additional_special_tokens' in h5_file['vocab'].attrs:
+            additional_special_tokens = h5_file['vocab'].attrs['additional_special_tokens']
+            vocab_special_chars = vocab[5:5 + additional_special_tokens].tolist()
+        else:
+            vocab_special_chars = []
+
+    model = TransformerS2S(
+        len(vocab),
+        config['TransformerS2S']['emb_dim'],
+        config['TransformerS2S']['n_head'],
+        config['TransformerS2S']['ff_dim'],
+        config['TransformerS2S']['num_enc_layers'],
+        config['TransformerS2S']['num_dec_layers']
+    )
+
+    pretrained_mdl_path = 'temp/models/current_bcuenwiki_gec_gbl_ft.pkl'
+    with open(pretrained_mdl_path, 'rb') as in_file:
+        loaded_data = torch.load(in_file, map_location=device)
+        model.load_state_dict(loaded_data['model_state_dict'])
+    model.to(device)
+    model.eval()
+
+    ft_corpus_path = 'temp/datasets/gec_combined.bpe.h5'
+    cl = StreamingH5CorpusLoader.load_and_split(
+        ft_corpus_path,
+        use_split_id=0,
+        forced_vocab=(vocab, vocab_special_chars),
+        device=device
+    )[0]
+
+    with open('/run/media/samuel/Data/UdeM/Recherche/Corpus/SimpleWiki/simple_wiki.noisy.train', 'w') as out_file:
+        with open('/run/media/samuel/Data/UdeM/Recherche/Corpus/SimpleWiki/simple_wiki.sent.clean', 'r') as in_file:
+            for line in in_file:
+                line = line.strip().lower()
+                line = ' '.join([t.text for t in nlp(line)])
+                line = bpe.apply([line])[0]
+                print(line)
+                encoded = cl.encode_sentence(line).to(device)
+                beam_decoded = model.beam_decode_2(
+                    encoded,
+                    torch.tensor([cl.bos_idx], dtype=torch.long).to(device),
+                    beam_width=5,
+                    max_len=encoded.shape[0] * 2,
+                    end_token=cl.eos_idx,
+                    noising_beta=0.05,
+                    top_only=False,
+                    device=device
+                )
+                for bd in beam_decoded:
+                    sent = cl.decode_tensor(bd)
+                    if line == sent[0]:
+                        continue
+                    else:
+                        print('\t{}'.format(sent[0]))
+                        out_file.write('{} <split> {}\n'.format(line, sent[0]))
+                        break
+
+
+            # encoded_test = cl.encode_sentence(test)
+            # beam_decoded = model.beam_decode(
+            #                 encoded_test,
+            #                 torch.tensor([cl.bos_idx], dtype=torch.long),
+            #                 beam_width=2,
+            #                 max_len=encoded_test.shape[0]*2,
+            #                 end_token=cl.eos_idx,
+            #                 noising_beta=0.1,
+            #                 top_only=False,
+            #                 device=device
+            #             )
+            # for bd in beam_decoded:
+            #     print(cl.decode_tensor(bd))
