@@ -1,15 +1,10 @@
 import argparse
 import yaml
 import os
-import h5py
-import torch
-import torch.nn as nn
 import torch.optim as optim
 from stylecorrection.loaders.corpus import *
 from stylecorrection.models.wrappers import *
 from stylecorrection.models.transformer import TransformerS2S
-import spacy
-import fastBPE
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -716,7 +711,7 @@ elif config['mode'] == 'finetune_streaming':
 
                     train_loss_mean = torch.tensor(train_losses).mean()
                     valid_loss_mean = torch.tensor(valid_losses).mean()
-                    print('{}: Sentences Processed: {}/{}  Train:{:.4f}, Valid:{:.4f}'.format(i, cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0], len(cl_direct_noise_train), train_loss_mean, valid_loss_mean))
+                    print('{}: Sentences Processed: {}/{}  Train:{:.4f}, Valid:{:.4f}({:.4f})'.format(i, cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0], len(cl_direct_noise_train), train_loss_mean, valid_loss_mean, best_valid_loss))
 
                     if valid_loss_mean < best_valid_loss:
                         save_fn = os.path.expandvars(config['finetune']['best_model_save_fn'])
@@ -781,6 +776,8 @@ elif config['mode'] == 'finetune_streaming':
             optimizer.step()
 
 elif config['mode'] == 'debug':
+    import spacy
+    import fastBPE
 
     nlp = spacy.load('en', disable=['tagger', 'parser', 'ner', 'entity_linker', 'textcat', 'entity_ruler', 'sentencizer', 'merge_noun_chunks', 'merge_entities', 'merge_subtokens'])
     bpe = fastBPE.fastBPE('temp/datasets/bcu_enwiki.30000.codes', 'temp/datasets/bcu_enwiki_spacy.30000.bpe.vocab')
