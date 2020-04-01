@@ -817,7 +817,7 @@ elif config['mode'] == 'inference':
             for line in in_f:
                 line = line.strip()
                 print('ORI : {}'.format(line))
-                encoded = cl.encode_sentence(line)
+                encoded = cl.encode_sentence(line).to(device)
 
                 beam_decoded = model.beam_decode_2(
                     encoded,
