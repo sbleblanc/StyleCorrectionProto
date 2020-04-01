@@ -74,6 +74,7 @@ class TransformerS2S(nn.Module):
                       max_len: int = 175,
                       end_token: int = -1,
                       noising_beta: float = 0.,
+                      topmost_noising: bool = False,
                       top_only: bool = True,
                       device: str = 'cpu'):
         if input.ndim == 1:
@@ -86,13 +87,16 @@ class TransformerS2S(nn.Module):
         with torch.no_grad():
             for pi in range(max_len):
                 decoded = self.decode(encoded_input.repeat_interleave(candidates.shape[0], 1), None, candidates, None, None)
-                probs, indices = nn.functional.log_softmax(decoded, dim=-1).sort(dim=-1, descending=True)
-                probs = probs[:, -1, :beam_width]
+                logits, indices = decoded.sort(dim=-1, descending=True)
+                probs = nn.functional.log_softmax(logits[:, -1, :beam_width], dim=-1)
                 indices = indices[:, -1, :beam_width]
-                temp_scores = scores.repeat_interleave(beam_width).view(-1, beam_width) + probs
                 if noising_beta > 0.:
-                    noise = torch.rand_like(temp_scores) * noising_beta
-                    temp_scores = (temp_scores.exp() - noise).max(torch.tensor([0.]).to(device)).log()
+                    noise = torch.rand_like(probs) * noising_beta
+                    if topmost_noising:
+                        probs[:, 0] = (probs.exp()[:, 0] - noise[:, 0]).max(torch.tensor([0.]).to(device)).log()
+                    else:
+                        probs = (probs.exp() - noise).max(torch.tensor([0.]).to(device)).log()
+                temp_scores = scores.repeat_interleave(beam_width).view(-1, beam_width) + probs
                 final_scores, final_indices = temp_scores.view(-1).sort(descending=True)
                 scores = final_scores[:beam_width]
                 candidates_previous = final_indices[:beam_width] // beam_width

@@ -774,6 +774,68 @@ elif config['mode'] == 'finetune_streaming':
             loss.backward()
             train_losses.append(loss.item())
             optimizer.step()
+elif config['mode'] == 'inference':
+    if config['manual_eval']['force_cpu']:
+        device = 'cpu'
+
+    vocab_path = os.path.expandvars(config['inference']['h5']['vocab'])
+    with h5py.File(vocab_path, 'r') as h5_file:
+        vocab = h5_file['vocab'][:]
+        if 'additional_special_tokens' in h5_file['vocab'].attrs:
+            additional_special_tokens = h5_file['vocab'].attrs['additional_special_tokens']
+            vocab_special_chars = vocab[5:5 + additional_special_tokens].tolist()
+        else:
+            vocab_special_chars = []
+
+    ft_corpus_path = os.path.expandvars(config['inference']['h5']['ft_corpus'])
+    cl = StreamingH5CorpusLoader.load_and_split(
+        ft_corpus_path,
+        use_split_id=config['inference']['h5']['ft_corpus_split'],
+        forced_vocab=(vocab, vocab_special_chars)
+    )[0]
+
+    model = TransformerS2S(
+        len(vocab),
+        config['TransformerS2S']['emb_dim'],
+        config['TransformerS2S']['n_head'],
+        config['TransformerS2S']['ff_dim'],
+        config['TransformerS2S']['num_enc_layers'],
+        config['TransformerS2S']['num_dec_layers']
+    )
+
+    pretrained_mdl_path = os.path.expandvars(config['inference']['pretrained_model'])
+    with open(pretrained_mdl_path, 'rb') as in_file:
+        loaded_data = torch.load(in_file, map_location=device)
+        model.load_state_dict(loaded_data['model_state_dict'])
+    model.to(device)
+    model.eval()
+
+    source_input_fn = os.path.expandvars(config['inference']['source_fn'])
+    hyp_output_fn = os.path.expandvars(config['inference']['hyp_fn'])
+    with open(source_input_fn, 'r') as in_f:
+        with open(hyp_output_fn, 'w') as out_f:
+            for line in in_f:
+                line = line.strip()
+                print('ORI : {}'.format(line))
+                encoded = cl.encode_sentence(line)
+
+                beam_decoded = model.beam_decode_2(
+                    encoded,
+                    torch.tensor([cl.bos_idx], dtype=torch.long).to(device),
+                    beam_width=config['inference']['beam_width'],
+                    max_len=encoded.shape[0] * 2,
+                    end_token=cl.eos_idx,
+                    noising_beta=0.0,
+                    top_only=False,
+                    device=device
+                )
+
+                decoded_sentence = cl.decode_tensor(beam_decoded[0])
+                decoded_sentence = decoded_sentence.replace("@@ ", "")
+                out_f.write('{}\n'.format(decoded_sentence))
+                print('HYP : {}'.format(decoded_sentence))
+
+
 
 elif config['mode'] == 'debug':
     import spacy
@@ -801,7 +863,7 @@ elif config['mode'] == 'debug':
         config['TransformerS2S']['num_dec_layers']
     )
 
-    pretrained_mdl_path = 'temp/models/current_bcuenwiki_gec_gbl_ft.pkl'
+    pretrained_mdl_path = 'temp/models/best_gec_bt.pkl'
     with open(pretrained_mdl_path, 'rb') as in_file:
         loaded_data = torch.load(in_file, map_location=device)
         model.load_state_dict(loaded_data['model_state_dict'])
@@ -818,11 +880,11 @@ elif config['mode'] == 'debug':
 
     with open('/run/media/samuel/Data/UdeM/Recherche/Corpus/SimpleWiki/simple_wiki.noisy.train', 'w') as out_file:
         with open('/run/media/samuel/Data/UdeM/Recherche/Corpus/SimpleWiki/simple_wiki.sent.clean', 'r') as in_file:
-            for line in in_file:
+            for i, line in enumerate(in_file):
                 line = line.strip().lower()
                 line = ' '.join([t.text for t in nlp(line)])
                 line = bpe.apply([line])[0]
-                print(line)
+                print('{}: {}'.format(i, line))
                 encoded = cl.encode_sentence(line).to(device)
                 beam_decoded = model.beam_decode_2(
                     encoded,
@@ -830,7 +892,7 @@ elif config['mode'] == 'debug':
                     beam_width=5,
                     max_len=encoded.shape[0] * 2,
                     end_token=cl.eos_idx,
-                    noising_beta=0.05,
+                    noising_beta=0.7,
                     top_only=False,
                     device=device
                 )
