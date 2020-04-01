@@ -830,7 +830,7 @@ elif config['mode'] == 'inference':
                     device=device
                 )
 
-                decoded_sentence = cl.decode_tensor(beam_decoded[0])
+                decoded_sentence = cl.decode_tensor(beam_decoded[0])[0]
                 decoded_sentence = decoded_sentence.replace("@@ ", "")
                 out_f.write('{}\n'.format(decoded_sentence))
                 print('HYP : {}'.format(decoded_sentence))
