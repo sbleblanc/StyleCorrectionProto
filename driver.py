@@ -837,7 +837,7 @@ elif config['mode'] == 'inference':
                     encoded,
                     torch.tensor([cl.bos_idx], dtype=torch.long).to(device),
                     beam_width=config['inference']['beam_width'],
-                    max_len=encoded.shape[0] * config['inference']['max_len_scale'],
+                    max_len=int(encoded.shape[0] * config['inference']['max_len_scale']),
                     end_token=cl.eos_idx,
                     noising_beta=config['inference']['noising_beta'],
                     temperature=config['inference']['temperature'],
