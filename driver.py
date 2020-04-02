@@ -775,8 +775,19 @@ elif config['mode'] == 'finetune_streaming':
             train_losses.append(loss.item())
             optimizer.step()
 elif config['mode'] == 'inference':
-    if config['manual_eval']['force_cpu']:
+    if config['inference']['force_cpu']:
         device = 'cpu'
+
+    if config['inference']['preprocess']['activate']:
+        import spacy
+        import fastBPE
+
+        nlp = spacy.load('en-core-web-sm',
+                         disable=['tagger', 'parser', 'ner', 'entity_linker', 'textcat', 'entity_ruler', 'sentencizer',
+                                  'merge_noun_chunks', 'merge_entities', 'merge_subtokens'])
+        codes_fn = os.path.expandvars(config['inference']['preprocess']['bpe_codes_fn'])
+        bpe_vocab_fn = os.path.expandvars(config['inference']['preprocess']['bpe_vocab_fn'])
+        bpe = fastBPE.fastBPE(codes_fn, bpe_vocab_fn)
 
     vocab_path = os.path.expandvars(config['inference']['h5']['vocab'])
     with h5py.File(vocab_path, 'r') as h5_file:
@@ -816,7 +827,10 @@ elif config['mode'] == 'inference':
         with open(hyp_output_fn, 'w') as out_f:
             for line in in_f:
                 line = line.strip()
-                print('ORI : {}'.format(line))
+                if config['inference']['preprocess']['activate']:
+                    line = ' '.join([t.text for t in nlp(line)])
+                    line = bpe.apply([line])[0]
+                print('IN  : {}'.format(line))
                 encoded = cl.encode_sentence(line).to(device)
 
                 beam_decoded = model.beam_decode_2(
@@ -825,16 +839,20 @@ elif config['mode'] == 'inference':
                     beam_width=config['inference']['beam_width'],
                     max_len=encoded.shape[0] * config['inference']['max_len_scale'],
                     end_token=cl.eos_idx,
-                    noising_beta=0.0,
+                    noising_beta=config['inference']['noising_beta'],
                     temperature=config['inference']['temperature'],
                     top_only=False,
                     device=device
                 )
 
                 decoded_sentence = cl.decode_tensor(beam_decoded[0])[0]
-                decoded_sentence = decoded_sentence.replace("@@ ", "")
-                out_f.write('{}\n'.format(decoded_sentence))
-                print('HYP : {}'.format(decoded_sentence))
+                if config['inference']['remove_bpe_placeholder']:
+                    decoded_sentence = decoded_sentence.replace("@@ ", "")
+                if config['inference']['output_parallel']:
+                    out_f.write('{} <split> {}\n'.format(line, decoded_sentence))
+                else:
+                    out_f.write('{}\n'.format(decoded_sentence))
+                print('OUT : {}'.format(decoded_sentence))
 
 
 elif config['mode'] == 'debug':
