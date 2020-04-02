@@ -828,6 +828,7 @@ elif config['mode'] == 'inference':
             for line in in_f:
                 line = line.strip()
                 if config['inference']['preprocess']['activate']:
+                    line = line.lower()
                     line = ' '.join([t.text for t in nlp(line)])
                     line = bpe.apply([line])[0]
                 print('IN  : {}'.format(line))
