@@ -823,9 +823,10 @@ elif config['mode'] == 'inference':
                     encoded,
                     torch.tensor([cl.bos_idx], dtype=torch.long).to(device),
                     beam_width=config['inference']['beam_width'],
-                    max_len=encoded.shape[0] * 2,
+                    max_len=encoded.shape[0] * config['inference']['max_len_scale'],
                     end_token=cl.eos_idx,
                     noising_beta=0.0,
+                    temperature=config['inference']['temperature'],
                     top_only=False,
                     device=device
                 )
@@ -834,7 +835,6 @@ elif config['mode'] == 'inference':
                 decoded_sentence = decoded_sentence.replace("@@ ", "")
                 out_f.write('{}\n'.format(decoded_sentence))
                 print('HYP : {}'.format(decoded_sentence))
-
 
 
 elif config['mode'] == 'debug':
@@ -863,7 +863,7 @@ elif config['mode'] == 'debug':
         config['TransformerS2S']['num_dec_layers']
     )
 
-    pretrained_mdl_path = 'temp/models/best_gec_bt.pkl'
+    pretrained_mdl_path = 'temp/models/current_bcuenwiki_gec_gbl_ft.pkl'
     with open(pretrained_mdl_path, 'rb') as in_file:
         loaded_data = torch.load(in_file, map_location=device)
         model.load_state_dict(loaded_data['model_state_dict'])
@@ -885,14 +885,19 @@ elif config['mode'] == 'debug':
                 line = ' '.join([t.text for t in nlp(line)])
                 line = bpe.apply([line])[0]
                 print('{}: {}'.format(i, line))
+                if len(line.split())> 125:
+                    print('\tTOO LONG')
+                    continue
                 encoded = cl.encode_sentence(line).to(device)
                 beam_decoded = model.beam_decode_2(
                     encoded,
                     torch.tensor([cl.bos_idx], dtype=torch.long).to(device),
-                    beam_width=5,
+                    beam_width=8,
                     max_len=encoded.shape[0] * 2,
                     end_token=cl.eos_idx,
-                    noising_beta=0.7,
+                    noising_beta=0.5,
+                    topmost_noising=False,
+                    temperature=100.,
                     top_only=False,
                     device=device
                 )
