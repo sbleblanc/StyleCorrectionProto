@@ -782,7 +782,7 @@ elif config['mode'] == 'inference':
         import spacy
         import fastBPE
 
-        nlp = spacy.load('en-core-web-sm',
+        nlp = spacy.load('en_core_web_sm',
                          disable=['tagger', 'parser', 'ner', 'entity_linker', 'textcat', 'entity_ruler', 'sentencizer',
                                   'merge_noun_chunks', 'merge_entities', 'merge_subtokens'])
         codes_fn = os.path.expandvars(config['inference']['preprocess']['bpe_codes_fn'])
