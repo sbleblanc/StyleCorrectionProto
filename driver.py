@@ -823,8 +823,12 @@ elif config['mode'] == 'inference':
 
     source_input_fn = os.path.expandvars(config['inference']['source_fn'])
     hyp_output_fn = os.path.expandvars(config['inference']['hyp_fn'])
+    if config['inference']['output_buffering']:
+        buffering = 1
+    else:
+        buffering = -1
     with open(source_input_fn, 'r') as in_f:
-        with open(hyp_output_fn, 'w') as out_f:
+        with open(hyp_output_fn, 'w', buffering=buffering) as out_f:
             for line in in_f:
                 line = line.strip()
                 if config['inference']['preprocess']['activate']:
@@ -882,7 +886,7 @@ elif config['mode'] == 'debug':
         config['TransformerS2S']['num_dec_layers']
     )
 
-    pretrained_mdl_path = 'temp/models/current_bcuenwiki_gec_gbl_ft.pkl'
+    pretrained_mdl_path = 'temp/models/best_bcuenwiki_gec_gbl_ft.pkl'
     with open(pretrained_mdl_path, 'rb') as in_file:
         loaded_data = torch.load(in_file, map_location=device)
         model.load_state_dict(loaded_data['model_state_dict'])
@@ -911,10 +915,10 @@ elif config['mode'] == 'debug':
                 beam_decoded = model.beam_decode_2(
                     encoded,
                     torch.tensor([cl.bos_idx], dtype=torch.long).to(device),
-                    beam_width=8,
+                    beam_width=5,
                     max_len=encoded.shape[0] * 2,
                     end_token=cl.eos_idx,
-                    noising_beta=0.5,
+                    noising_beta=0.3,
                     topmost_noising=False,
                     temperature=100.,
                     top_only=False,
