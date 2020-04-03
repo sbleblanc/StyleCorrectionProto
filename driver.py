@@ -824,9 +824,9 @@ elif config['mode'] == 'inference':
     source_input_fn = os.path.expandvars(config['inference']['source_fn'])
     hyp_output_fn = os.path.expandvars(config['inference']['hyp_fn'])
     if config['inference']['output_buffering']:
-        buffering = 1
-    else:
         buffering = -1
+    else:
+        buffering = 1
     with open(source_input_fn, 'r') as in_f:
         with open(hyp_output_fn, 'w', buffering=buffering) as out_f:
             for line in in_f:
