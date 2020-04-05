@@ -836,6 +836,9 @@ elif config['mode'] == 'inference':
                     line = ' '.join([t.text for t in nlp(line)])
                     line = bpe.apply([line])[0]
                 print('IN  : {}'.format(line))
+                if config['inference']['max_len'] > 0 and len(line.split(' ')) > config['inference']['max_len']:
+                    print('TOO LONG')
+                    continue
                 encoded = cl.encode_sentence(line).to(device)
 
                 beam_decoded = model.beam_decode_2(
