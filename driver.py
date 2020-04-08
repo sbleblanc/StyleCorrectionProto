@@ -68,6 +68,7 @@ if config['mode'] == 'eval':
             )
 
         print("IN: {}".format(ds))
+        print("EXPECTED: {}".format(cs))
         for s, b in res:
             decoded = cl.decode_tensor(b)
             print('\t({:.4f}) : {}'.format(s, decoded[0]))
