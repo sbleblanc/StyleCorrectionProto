@@ -77,6 +77,7 @@ class TransformerS2S(nn.Module):
                       topmost_noising: bool = False,
                       temperature: float = 1.,
                       top_only: bool = True,
+                      return_scores: bool = False,
                       device: str = 'cpu'):
         if input.ndim == 1:
             input = input.unsqueeze(0)
@@ -130,7 +131,10 @@ class TransformerS2S(nn.Module):
                 completed_beams.append((scores[i].item(), candidates[i]))
 
         completed_beams = sorted(completed_beams, key=lambda x: x[0], reverse=True)
-        return [b for s, b in completed_beams]
+        if return_scores:
+            return completed_beams
+        else:
+            return [b for s, b in completed_beams]
 
 
     def beam_decode(self,

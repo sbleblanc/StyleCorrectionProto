@@ -57,17 +57,20 @@ if config['mode'] == 'eval':
         test_sentence = cl.encode_sentence(ds).to(device)
 
         with torch.no_grad():
-            res = model.beam_decode(
+            res = model.beam_decode_2(
                 test_sentence,
                 torch.tensor([cl.bos_idx], dtype=torch.long),
                 beam_width=5,
-                max_len=len(test_sentence) + 5,
+                max_len=int(len(test_sentence) * 1.5),
                 end_token=cl.eos_idx,
+                return_scores=True,
                 device=device
             )
 
-        decoded = cl.decode_tensor(torch.tensor(res, dtype=torch.long))
-        print('[{}] -> [{}] ({})'.format(ds, decoded, cs))
+        print("IN: {}".format(ds))
+        for s, b in res:
+            decoded = cl.decode_tensor(b)
+            print('\t({:.4f}) : {}'.format(s, decoded[0]))
 
 if config['mode'] == 'hd5_gen':
     print('Creating hd5 dataset...')
@@ -79,7 +82,7 @@ if config['mode'] == 'hd5_gen':
         h5_fn,
         os.path.expandvars(config['hd5_gen']['corpus_tar_gz']),
         lambda x: x.strip().split(' '),
-        None,
+        lambda x: x.lower(),
         config['hd5_gen']['topk'],
         config['hd5_gen']['max_len'],
         additional_tokens
@@ -907,6 +910,7 @@ elif config['mode'] == 'debug':
     with open('/run/media/samuel/Data/UdeM/Recherche/Corpus/SimpleWiki/simple_wiki.noisy.train', 'w') as out_file:
         with open('/run/media/samuel/Data/UdeM/Recherche/Corpus/SimpleWiki/simple_wiki.sent.clean', 'r') as in_file:
             for i, line in enumerate(in_file):
+                line = "the team with the most points at the end of the game wins ."
                 line = line.strip().lower()
                 line = ' '.join([t.text for t in nlp(line)])
                 line = bpe.apply([line])[0]
@@ -918,8 +922,8 @@ elif config['mode'] == 'debug':
                 beam_decoded = model.beam_decode_2(
                     encoded,
                     torch.tensor([cl.bos_idx], dtype=torch.long).to(device),
-                    beam_width=5,
-                    max_len=encoded.shape[0] * 2,
+                    beam_width=8,
+                    max_len=int(encoded.shape[0] * 1.5),
                     end_token=cl.eos_idx,
                     noising_beta=0.3,
                     topmost_noising=False,
