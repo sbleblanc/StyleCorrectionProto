@@ -60,7 +60,7 @@ if config['mode'] == 'eval':
             res = model.beam_decode_2(
                 test_sentence,
                 torch.tensor([cl.bos_idx], dtype=torch.long),
-                beam_width=5,
+                beam_width=config['manual_eval']['beam_width'],
                 max_len=int(len(test_sentence) * 1.5),
                 end_token=cl.eos_idx,
                 return_scores=True,
