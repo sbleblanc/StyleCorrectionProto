@@ -836,9 +836,9 @@ elif config['mode'] == 'inference':
             for line in in_f:
                 line = line.strip()
                 if config['inference']['preprocess']['activate']:
-                    line = line.lower()
                     line = ' '.join([t.text for t in nlp(line)])
                     line = bpe.apply([line])[0]
+                    line = line.lower()
                 print('IN  : {}'.format(line))
                 if config['inference']['max_len'] > 0 and len(line.split(' ')) > config['inference']['max_len']:
                     print('TOO LONG')
