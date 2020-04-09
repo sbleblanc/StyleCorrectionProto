@@ -900,13 +900,15 @@ elif config['mode'] == 'debug':
     model.to(device)
     model.eval()
 
-    ft_corpus_path = 'temp/datasets/gec_combined.bpe.h5'
+    ft_corpus_path = 'temp/datasets/gec_combined_real_clean.bpe.h5'
     cl = StreamingH5CorpusLoader.load_and_split(
         ft_corpus_path,
         use_split_id=0,
         forced_vocab=(vocab, vocab_special_chars),
         device=device
     )[0]
+
+    test = [((b,e), cl.corpus[b:e]) for b, e in cl.sentences[(cl.sentences[:,1] - cl.sentences[:,0] == 5).nonzero().squeeze(1)] if torch.tensor([35,17,1801,9,6],dtype=torch.int).allclose(cl.corpus[b:e])]
 
     with open('/run/media/samuel/Data/UdeM/Recherche/Corpus/SimpleWiki/simple_wiki.noisy.train', 'w') as out_file:
         with open('/run/media/samuel/Data/UdeM/Recherche/Corpus/SimpleWiki/simple_wiki.sent.clean', 'r') as in_file:
