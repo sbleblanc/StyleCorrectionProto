@@ -674,11 +674,18 @@ elif config['mode'] == 'finetune_streaming':
                 model.load_state_dict(loaded_data['model_state_dict'])
             loaded_data = None
 
-    if config['finetune']['freeze_embeddings']:
+    if config['finetune']['freeze'] == 'emb':
         if in_multigpu_mode:
             model.module.model.emb.weight.require_grad = False
         else:
             model.emb.weight.require_grad = False
+    elif config['finetune']['freeze'] == 'enc':
+        if in_multigpu_mode:
+            for param in model.module.model.enc.parameters():
+                param.requires_grad = False
+        else:
+            for param in model.enc.parameters():
+                param.requires_grad = False
 
     train_losses = []
 
