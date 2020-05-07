@@ -487,9 +487,11 @@ class StreamingH5CorpusLoader(object):
                 global_wtoi = dict([(w, i) for i, w in enumerate(global_vocab)])
                 forced_vocab_additional_special_tokens = len(forced_vocab[1])
                 temp_vocab = np.empty(forced_vocab[0].shape[0] + additional_special_tokens, dtype=forced_vocab[0].dtype)
-                temp_vocab[:5+forced_vocab_additional_special_tokens] = forced_vocab[0][:5+forced_vocab_additional_special_tokens]
-                temp_vocab[5+forced_vocab_additional_special_tokens:5+forced_vocab_additional_special_tokens+additional_special_tokens] = global_vocab[5:5+additional_special_tokens]
-                temp_vocab[5+forced_vocab_additional_special_tokens+additional_special_tokens:] = forced_vocab[0][5+forced_vocab_additional_special_tokens:]
+                temp_vocab[:forced_vocab[0].shape[0]] = forced_vocab[0]
+                temp_vocab[forced_vocab[0].shape[0]:] = global_vocab[5:5+additional_special_tokens]
+                # temp_vocab[:5+forced_vocab_additional_special_tokens] = forced_vocab[0][:5+forced_vocab_additional_special_tokens]
+                # temp_vocab[5+forced_vocab_additional_special_tokens:5+forced_vocab_additional_special_tokens+additional_special_tokens] = global_vocab[5:5+additional_special_tokens]
+                # temp_vocab[5+forced_vocab_additional_special_tokens+additional_special_tokens:] = forced_vocab[0][5+forced_vocab_additional_special_tokens:]
                 wtoi = dict([(w, i) for i, w in enumerate(temp_vocab)])
                 gtr_mapping = torch.empty(len(global_vocab), dtype=torch.int).fill_(wtoi[cls.unk_token])
                 diff_counter = 0
