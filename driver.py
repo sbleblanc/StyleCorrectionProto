@@ -675,17 +675,37 @@ elif config['mode'] == 'finetune_streaming':
             loaded_data = None
 
     if config['finetune']['freeze'] == 'emb':
+        print('Freezing Embeddings')
         if in_multigpu_mode:
             model.module.model.emb.weight.require_grad = False
         else:
             model.emb.weight.require_grad = False
     elif config['finetune']['freeze'] == 'enc':
+        print('Freezing Embeddings + Encoder')
         if in_multigpu_mode:
+            model.module.model.emb.weight.require_grad = False
             for param in model.module.model.enc.parameters():
                 param.requires_grad = False
         else:
+            model.emb.weight.require_grad = False
             for param in model.enc.parameters():
                 param.requires_grad = False
+    elif config['finetune']['freeze'] == 'enc_dec':
+        print('Freezing Embeddings + Encoder + Decoder')
+        if in_multigpu_mode:
+            model.module.model.emb.weight.require_grad = False
+            for param in model.module.model.enc.parameters():
+                param.requires_grad = False
+            for param in model.module.model.dec.parameters():
+                param.requires_grad = False
+        else:
+            model.emb.weight.require_grad = False
+            for param in model.enc.parameters():
+                param.requires_grad = False
+            for param in model.dec.parameters():
+                param.requires_grad = False
+    else:
+        print('Nothing is freezed')
 
     train_losses = []
 
