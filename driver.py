@@ -443,6 +443,7 @@ elif config['mode'] == 'pretrain_streaming':
     train_losses = []
     patience_counter = 0
 
+    update_steps = 0
     for i in range(config['pretrain']['max_epoch']):
         model.train()
         if cl_train.group_indexing:
@@ -489,7 +490,7 @@ elif config['mode'] == 'pretrain_streaming':
 
                     train_loss_mean = torch.tensor(train_losses).mean()
                     valid_loss_mean = torch.tensor(valid_losses).mean()
-                    print('{}: Sentences Processed {}/{} : Train:{:.4f}, Valid:{:.4f}'.format(i, cl_train.current_iterating_idx - t_enc_in.shape[0], len(cl_train), train_loss_mean, valid_loss_mean))
+                    print('{}: Sentences Processed {}/{} / Num. Steps {} : Train:{:.4f}, Valid:{:.4f}'.format(i, cl_train.current_iterating_idx - t_enc_in.shape[0], len(cl_train), update_steps, train_loss_mean, valid_loss_mean))
 
                     if valid_loss_mean < best_valid_loss:
                         save_fn = os.path.expandvars(config['pretrain']['best_model_save_fn'])
@@ -543,6 +544,7 @@ elif config['mode'] == 'pretrain_streaming':
             loss.backward()
             train_losses.append(loss.item())
             optimizer.step()
+            update_steps += 1
             current_groups_offsets = cl_train.group_offsets.clone()
 
         if patience_counter > config['pretrain']['valid_patience']:
@@ -710,6 +712,7 @@ elif config['mode'] == 'finetune_streaming':
     train_losses = []
 
     patience_counter = 0
+    update_steps  = 0
     for i in range(config['finetune']['max_epoch']):
         model.train()
         for tbi, (t_noised_batch, t_input_key_mask, t_bos_trunc, t_eos_trunc, t_output_key_mask, t_offsets) in enumerate(dnds_train):
@@ -748,7 +751,7 @@ elif config['mode'] == 'finetune_streaming':
 
                     train_loss_mean = torch.tensor(train_losses).mean()
                     valid_loss_mean = torch.tensor(valid_losses).mean()
-                    print('{}: Sentences Processed: {}/{}  Train:{:.4f}, Valid:{:.4f}({:.4f})'.format(i, cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0], len(cl_direct_noise_train), train_loss_mean, valid_loss_mean, best_valid_loss))
+                    print('{}: Sentences Processed: {}/{} / Steps {} : Train:{:.4f}, Valid:{:.4f}({:.4f})'.format(i, cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0], len(cl_direct_noise_train), update_steps, train_loss_mean, valid_loss_mean, best_valid_loss))
 
                     if valid_loss_mean < best_valid_loss:
                         save_fn = os.path.expandvars(config['finetune']['best_model_save_fn'])
@@ -811,6 +814,8 @@ elif config['mode'] == 'finetune_streaming':
             loss.backward()
             train_losses.append(loss.item())
             optimizer.step()
+            update_steps += 1
+
 elif config['mode'] == 'inference':
     if config['inference']['force_cpu']:
         device = 'cpu'
@@ -866,7 +871,9 @@ elif config['mode'] == 'inference':
         buffering = 1
     with open(source_input_fn, 'r') as in_f:
         with open(hyp_output_fn, 'w', buffering=buffering) as out_f:
-            for line in in_f:
+            for li, line in enumerate(in_f):
+                if li < config['inference']['line_offset']:
+                    continue
                 line = line.strip()
                 if config['inference']['preprocess']['activate']:
                     line = ' '.join([t.text for t in nlp(line)])
@@ -904,6 +911,7 @@ elif config['mode'] == 'debug':
     import spacy
     import fastBPE
 
+
     nlp = spacy.load('en', disable=['tagger', 'parser', 'ner', 'entity_linker', 'textcat', 'entity_ruler', 'sentencizer', 'merge_noun_chunks', 'merge_entities', 'merge_subtokens'])
     bpe = fastBPE.fastBPE('temp/datasets/bcu_enwiki.30000.codes', 'temp/datasets/bcu_enwiki_spacy.30000.bpe.vocab')
     # device = 'cpu'
@@ -925,6 +933,10 @@ elif config['mode'] == 'debug':
         config['TransformerS2S']['num_enc_layers'],
         config['TransformerS2S']['num_dec_layers']
     )
+
+    pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print("Num Params : {:,}".format(pytorch_total_params))
+
 
     pretrained_mdl_path = 'temp/models/best_bcuenwiki_gec_gbl_ft.pkl'
     with open(pretrained_mdl_path, 'rb') as in_file:
