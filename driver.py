@@ -445,10 +445,11 @@ elif config['mode'] == 'pretrain_streaming':
     if config['optimizer']['scheduler']['use'] == 'one_cycle':
         pct = config['optimizer']['scheduler']['one_cycle']['warmup_steps'] / \
               config['optimizer']['scheduler']['one_cycle']['total_steps']
+        print('Scheduler Pct: {:%}'.format(pct))
         optimizer = optim.lr_scheduler.OneCycleLR(
             optimizer=optimizer,
             max_lr=config['optimizer']['scheduler']['one_cycle']['max_lr'],
-            div_factor=config['optimizer']['scheduler']['one_cycle']['inital_lr_div'],
+            div_factor=config['optimizer']['scheduler']['one_cycle']['initial_lr_div'],
             final_div_factor=config['optimizer']['scheduler']['one_cycle']['final_lr_div'],
             total_steps=config['optimizer']['scheduler']['one_cycle']['total_steps'],
             base_momentum=config['optimizer']['scheduler']['one_cycle']['base_momentum'],
