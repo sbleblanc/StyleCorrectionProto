@@ -420,6 +420,7 @@ elif config['mode'] == 'pretrain_streaming':
         model_save_fn = os.path.expandvars(config['pretrain']['current_model_save_fn'])
 
     best_valid_loss = float('inf')
+    current_training_step = 0
     if os.path.exists(model_save_fn):
         with open(model_save_fn, 'rb') as data_file:
             print('Loading from {}'.format(model_save_fn))
@@ -438,13 +439,28 @@ elif config['mode'] == 'pretrain_streaming':
                 model.load_state_dict(loaded_data['model_state_dict'])
             if 'best_valid_loss' in loaded_data:
                 best_valid_loss = loaded_data['best_valid_loss']
+            if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                current_training_step = loaded_data['current_training_step']
 
+    if config['optimizer']['scheduler']['use'] == 'one_cycle':
+        pct = config['optimizer']['scheduler']['one_cycle']['warmup_steps'] / \
+              config['optimizer']['scheduler']['one_cycle']['total_steps']
+        optimizer = optim.lr_scheduler.OneCycleLR(
+            optimizer=optimizer,
+            max_lr=config['optimizer']['scheduler']['one_cycle']['max_lr'],
+            div_factor=config['optimizer']['scheduler']['one_cycle']['inital_lr_div'],
+            final_div_factor=config['optimizer']['scheduler']['one_cycle']['final_lr_div'],
+            total_steps=config['optimizer']['scheduler']['one_cycle']['total_steps'],
+            base_momentum=config['optimizer']['scheduler']['one_cycle']['base_momentum'],
+            max_momentum=config['optimizer']['scheduler']['one_cycle']['max_momentum'],
+            pct=pct,
+            last_epoch=current_training_step
+        )
 
     train_losses = []
     patience_counter = 0
 
-    update_steps = 0
-    for i in range(config['pretrain']['max_epoch']):
+    for i in range(config['pretrain']['training_max']['amount']):
         model.train()
         if cl_train.group_indexing:
             current_groups_offsets = cl_train.group_offsets.clone()
@@ -490,14 +506,15 @@ elif config['mode'] == 'pretrain_streaming':
 
                     train_loss_mean = torch.tensor(train_losses).mean()
                     valid_loss_mean = torch.tensor(valid_losses).mean()
-                    print('{}: Sentences Processed {}/{} / Num. Steps {} : Train:{:.4f}, Valid:{:.4f}'.format(i, cl_train.current_iterating_idx - t_enc_in.shape[0], len(cl_train), update_steps, train_loss_mean, valid_loss_mean))
+                    print('{}: Sentences Processed {}/{} / Num. Steps {} : Train:{:.4f}, Valid:{:.4f}'.format(i, cl_train.current_iterating_idx - t_enc_in.shape[0], len(cl_train), current_training_step, train_loss_mean, valid_loss_mean))
 
                     if valid_loss_mean < best_valid_loss:
                         save_fn = os.path.expandvars(config['pretrain']['best_model_save_fn'])
                         with open(save_fn, 'wb') as out_file:
                             to_save = {
                                 'optim_state_dict': optimizer.state_dict(),
-                                'best_valid_loss': valid_loss_mean
+                                'best_valid_loss': valid_loss_mean,
+                                'current_training_step': current_training_step
                             }
                             to_save.update(cl_train.state)
                             if cl_train.group_indexing:
@@ -518,7 +535,8 @@ elif config['mode'] == 'pretrain_streaming':
                     with open(save_fn, 'wb') as out_file:
                         to_save = {
                             'optim_state_dict': optimizer.state_dict(),
-                            'best_valid_loss': best_valid_loss
+                            'best_valid_loss': best_valid_loss,
+                            'current_training_step': current_training_step
                         }
                         to_save.update(cl_train.state)
                         if cl_train.group_indexing:
@@ -544,12 +562,13 @@ elif config['mode'] == 'pretrain_streaming':
             loss.backward()
             train_losses.append(loss.item())
             optimizer.step()
-            update_steps += 1
+            current_training_step += 1
             current_groups_offsets = cl_train.group_offsets.clone()
 
-        if patience_counter > config['pretrain']['valid_patience']:
-            print('Patience threshold reached')
+        if config['pretrain']['training_max']['use'] == 'steps' and current_training_step >= config['pretrain']['training_max']['amount']:
+            print('Max steps reached.')
             break
+
     print('DONE')
 
 elif config['mode'] == 'finetune_streaming':
@@ -933,6 +952,11 @@ elif config['mode'] == 'debug':
         config['TransformerS2S']['num_enc_layers'],
         config['TransformerS2S']['num_dec_layers']
     )
+
+    optimizer = optim.Adam(model.parameters(),
+                           lr=config['optimizer']['adam']['lr'],
+                           betas=(config['optimizer']['adam']['beta_1'], config['optimizer']['adam']['beta_2']),
+                           eps=config['optimizer']['adam']['eps'])
 
     pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("Num Params : {:,}".format(pytorch_total_params))
