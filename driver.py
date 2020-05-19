@@ -459,6 +459,7 @@ elif config['mode'] == 'pretrain_streaming':
                 current_training_step = loaded_data['current_training_step']
             if config['optimizer']['scheduler']['use'] == 'one_cycle':
                 scheduler.load_state_dict(loaded_data['scheduler_state_dict'])
+                print(scheduler.state_dict())
 
 
 
