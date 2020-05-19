@@ -414,6 +414,22 @@ elif config['mode'] == 'pretrain_streaming':
                               weight_decay=config['optimizer']['sgd']['weight_decay'],
                               nesterov=config['optimizer']['sgd']['nesterov'])
 
+    if config['optimizer']['scheduler']['use'] == 'one_cycle':
+        pct = config['optimizer']['scheduler']['one_cycle']['warmup_steps'] / \
+              config['optimizer']['scheduler']['one_cycle']['total_steps']
+        print('Scheduler Pct: {:%}'.format(pct))
+        scheduler = optim.lr_scheduler.OneCycleLR(
+            optimizer=optimizer,
+            max_lr=config['optimizer']['scheduler']['one_cycle']['max_lr'],
+            div_factor=config['optimizer']['scheduler']['one_cycle']['initial_lr_div'],
+            final_div_factor=config['optimizer']['scheduler']['one_cycle']['final_lr_div'],
+            total_steps=config['optimizer']['scheduler']['one_cycle']['total_steps'],
+            anneal_strategy=config['optimizer']['scheduler']['one_cycle']['anneal_strategy'],
+            pct_start=pct,
+            last_epoch=-1,
+            cycle_momentum=False
+        )
+
     if config['pretrain']['resume_from'] == 'best':
         model_save_fn = os.path.expandvars(config['pretrain']['best_model_save_fn'])
     else:
@@ -439,24 +455,12 @@ elif config['mode'] == 'pretrain_streaming':
                 model.load_state_dict(loaded_data['model_state_dict'])
             if 'best_valid_loss' in loaded_data:
                 best_valid_loss = loaded_data['best_valid_loss']
-            if config['optimizer']['scheduler']['use'] == 'one_cycle':
+            if 'current_training_step' in loaded_data:
                 current_training_step = loaded_data['current_training_step']
+            if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                scheduler.load_state_dict(loaded_data['scheduler_state_dict'])
 
-    if config['optimizer']['scheduler']['use'] == 'one_cycle':
-        pct = config['optimizer']['scheduler']['one_cycle']['warmup_steps'] / \
-              config['optimizer']['scheduler']['one_cycle']['total_steps']
-        print('Scheduler Pct: {:%}'.format(pct))
-        optimizer = optim.lr_scheduler.OneCycleLR(
-            optimizer=optimizer,
-            max_lr=config['optimizer']['scheduler']['one_cycle']['max_lr'],
-            div_factor=config['optimizer']['scheduler']['one_cycle']['initial_lr_div'],
-            final_div_factor=config['optimizer']['scheduler']['one_cycle']['final_lr_div'],
-            total_steps=config['optimizer']['scheduler']['one_cycle']['total_steps'],
-            base_momentum=config['optimizer']['scheduler']['one_cycle']['base_momentum'],
-            max_momentum=config['optimizer']['scheduler']['one_cycle']['max_momentum'],
-            pct_start=pct,
-            last_epoch=current_training_step
-        )
+
 
     train_losses = []
     patience_counter = 0
@@ -526,6 +530,8 @@ elif config['mode'] == 'pretrain_streaming':
                                 to_save['model_state_dict'] = model.module.model.state_dict()
                             else:
                                 to_save['model_state_dict'] = model.state_dict()
+                            if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                                to_save['scheduler_state_dict'] = scheduler.state_dict()
                             torch.save(to_save, out_file)
                         patience_counter = 0
                         best_valid_loss = valid_loss_mean
@@ -548,6 +554,8 @@ elif config['mode'] == 'pretrain_streaming':
                             to_save['model_state_dict'] = model.module.model.state_dict()
                         else:
                             to_save['model_state_dict'] = model.state_dict()
+                        if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                            to_save['scheduler_state_dict'] = scheduler.state_dict()
                         torch.save(to_save, out_file)
 
                 train_losses.clear()
@@ -565,6 +573,8 @@ elif config['mode'] == 'pretrain_streaming':
             optimizer.step()
             current_training_step += 1
             current_groups_offsets = cl_train.group_offsets.clone()
+            if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                scheduler.step()
 
         if config['pretrain']['training_max']['use'] == 'steps' and current_training_step >= config['pretrain']['training_max']['amount']:
             print('Max steps reached.')
@@ -958,6 +968,22 @@ elif config['mode'] == 'debug':
                            lr=config['optimizer']['adam']['lr'],
                            betas=(config['optimizer']['adam']['beta_1'], config['optimizer']['adam']['beta_2']),
                            eps=config['optimizer']['adam']['eps'])
+
+    if config['optimizer']['scheduler']['use'] == 'one_cycle':
+        pct = config['optimizer']['scheduler']['one_cycle']['warmup_steps'] / \
+              config['optimizer']['scheduler']['one_cycle']['total_steps']
+        print('Scheduler Pct: {:%}'.format(pct))
+        scheduler = optim.lr_scheduler.OneCycleLR(
+            optimizer=optimizer,
+            max_lr=config['optimizer']['scheduler']['one_cycle']['max_lr'],
+            div_factor=config['optimizer']['scheduler']['one_cycle']['initial_lr_div'],
+            final_div_factor=config['optimizer']['scheduler']['one_cycle']['final_lr_div'],
+            total_steps=config['optimizer']['scheduler']['one_cycle']['total_steps'],
+            anneal_strategy=config['optimizer']['scheduler']['one_cycle']['anneal_strategy'],
+            pct_start=pct,
+            last_epoch=-1,
+            cycle_momentum=False
+        )
 
     pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("Num Params : {:,}".format(pytorch_total_params))
