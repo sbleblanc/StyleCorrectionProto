@@ -454,7 +454,7 @@ elif config['mode'] == 'pretrain_streaming':
             total_steps=config['optimizer']['scheduler']['one_cycle']['total_steps'],
             base_momentum=config['optimizer']['scheduler']['one_cycle']['base_momentum'],
             max_momentum=config['optimizer']['scheduler']['one_cycle']['max_momentum'],
-            pct=pct,
+            pct_start=pct,
             last_epoch=current_training_step
         )
 
