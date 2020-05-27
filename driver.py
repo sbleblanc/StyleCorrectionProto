@@ -389,7 +389,8 @@ elif config['mode'] == 'pretrain_streaming':
         config['TransformerS2S']['n_head'],
         config['TransformerS2S']['ff_dim'],
         config['TransformerS2S']['num_enc_layers'],
-        config['TransformerS2S']['num_dec_layers']
+        config['TransformerS2S']['num_dec_layers'],
+        config['TransformerS2S']['activation']
     )
 
     criterion = nn.CrossEntropyLoss(ignore_index=cl_train.pad_idx)
@@ -406,7 +407,8 @@ elif config['mode'] == 'pretrain_streaming':
         optimizer = optim.Adam(model.parameters(),
                                lr=config['optimizer']['adam']['lr'],
                                betas=(config['optimizer']['adam']['beta_1'], config['optimizer']['adam']['beta_2']),
-                               eps=config['optimizer']['adam']['eps'])
+                               eps=config['optimizer']['adam']['eps'],
+                               weight_decay=config['optimizer']['sgd']['weight_decay'])
     elif config['pretrain']['optimizer'] == 'sgd':
         optimizer = optim.SGD(model.parameters(),
                               lr=config['optimizer']['sgd']['lr'],
@@ -651,7 +653,8 @@ elif config['mode'] == 'finetune_streaming':
         config['TransformerS2S']['n_head'],
         config['TransformerS2S']['ff_dim'],
         config['TransformerS2S']['num_enc_layers'],
-        config['TransformerS2S']['num_dec_layers']
+        config['TransformerS2S']['num_dec_layers'],
+        config['TransformerS2S']['activation']
     )
 
     criterion = nn.CrossEntropyLoss(ignore_index=cl_direct_noise_train.pad_idx)
@@ -668,7 +671,8 @@ elif config['mode'] == 'finetune_streaming':
         optimizer = optim.Adam(model.parameters(),
                                lr=config['optimizer']['adam']['lr'],
                                betas=(config['optimizer']['adam']['beta_1'], config['optimizer']['adam']['beta_2']),
-                               eps=config['optimizer']['adam']['eps'])
+                               eps=config['optimizer']['adam']['eps'],
+                               weight_decay=config['optimizer']['sgd']['weight_decay'])
     elif config['finetune']['optimizer'] == 'sgd':
         optimizer = optim.SGD(model.parameters(),
                               lr=config['optimizer']['sgd']['lr'],

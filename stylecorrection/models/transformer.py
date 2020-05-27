@@ -33,14 +33,15 @@ class TransformerS2S(nn.Module):
                  nhead: int = 8,
                  ff_dim: int = 2048,
                  num_enc_layers: int = 6,
-                 num_dec_layers: int = 6):
+                 num_dec_layers: int = 6,
+                 activation: str = "relu"):
         super(TransformerS2S, self).__init__()
 
         self.emb = nn.Embedding(num_emb, emb_dim)
         self.pe = PositionalEncoding(emb_dim)
         l_norm = nn.LayerNorm(emb_dim)
-        tel = nn.TransformerEncoderLayer(emb_dim, nhead, ff_dim)
-        tdl = nn.TransformerDecoderLayer(emb_dim, nhead, ff_dim)
+        tel = nn.TransformerEncoderLayer(emb_dim, nhead, ff_dim, activation=activation)
+        tdl = nn.TransformerDecoderLayer(emb_dim, nhead, ff_dim, activation=activation)
         self.enc = nn.TransformerEncoder(tel, num_enc_layers, norm=l_norm)
         self.dec = nn.TransformerDecoder(tdl, num_dec_layers, norm=l_norm)
         self.lin = nn.Linear(emb_dim, num_emb)
