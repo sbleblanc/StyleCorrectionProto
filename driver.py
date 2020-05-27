@@ -572,6 +572,7 @@ elif config['mode'] == 'pretrain_streaming':
                 out = model(t_enc_in, t_dec_in, t_enc_in_key_mask, t_dec_in_key_mask, t_offsets)
                 loss = criterion(out.contiguous().view(-1, len(cl_train.vocab)), t_dec_out.view(-1))
             loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 1)
             train_losses.append(loss.item())
             optimizer.step()
             current_training_step += 1
@@ -847,6 +848,7 @@ elif config['mode'] == 'finetune_streaming':
                 out = model(t_noised_batch, t_eos_trunc, t_input_key_mask, t_output_key_mask, None)
                 loss = criterion(out.contiguous().view(-1, len(vocab)), t_bos_trunc.view(-1))
             loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 1)
             train_losses.append(loss.item())
             optimizer.step()
             update_steps += 1
@@ -966,8 +968,12 @@ elif config['mode'] == 'debug':
         config['TransformerS2S']['n_head'],
         config['TransformerS2S']['ff_dim'],
         config['TransformerS2S']['num_enc_layers'],
-        config['TransformerS2S']['num_dec_layers']
+        config['TransformerS2S']['num_dec_layers'],
+        config['TransformerS2S']['activation']
     )
+
+    pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 
     optimizer = optim.Adam(model.parameters(),
                            lr=config['optimizer']['adam']['lr'],
