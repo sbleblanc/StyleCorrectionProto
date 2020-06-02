@@ -572,7 +572,8 @@ elif config['mode'] == 'pretrain_streaming':
                 out = model(t_enc_in, t_dec_in, t_enc_in_key_mask, t_dec_in_key_mask, t_offsets)
                 loss = criterion(out.contiguous().view(-1, len(cl_train.vocab)), t_dec_out.view(-1))
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1)
+            if config['optimizer']['grad_clip_norm'] > 0:
+                nn.utils.clip_grad_norm_(model.parameters(), config['optimizer']['grad_clip_norm'])
             train_losses.append(loss.item())
             optimizer.step()
             current_training_step += 1
@@ -681,12 +682,29 @@ elif config['mode'] == 'finetune_streaming':
                               weight_decay=config['optimizer']['sgd']['weight_decay'],
                               nesterov=config['optimizer']['sgd']['nesterov'])
 
+    if config['optimizer']['scheduler']['use'] == 'one_cycle':
+        pct = config['optimizer']['scheduler']['one_cycle']['warmup_steps'] / \
+              config['optimizer']['scheduler']['one_cycle']['total_steps']
+        print('Scheduler Pct: {:%}'.format(pct))
+        scheduler = optim.lr_scheduler.OneCycleLR(
+            optimizer=optimizer,
+            max_lr=config['optimizer']['scheduler']['one_cycle']['max_lr'],
+            div_factor=config['optimizer']['scheduler']['one_cycle']['initial_lr_div'],
+            final_div_factor=config['optimizer']['scheduler']['one_cycle']['final_lr_div'],
+            total_steps=config['optimizer']['scheduler']['one_cycle']['total_steps'],
+            anneal_strategy=config['optimizer']['scheduler']['one_cycle']['anneal_strategy'],
+            pct_start=pct,
+            last_epoch=-1,
+            cycle_momentum=False
+        )
+
     if config['finetune']['resume_from'] == 'best':
         model_save_fn = os.path.expandvars(config['finetune']['best_model_save_fn'])
     else:
         model_save_fn = os.path.expandvars(config['finetune']['current_model_save_fn'])
 
     best_valid_loss = float('inf')
+    current_training_step = 0
     if os.path.exists(model_save_fn):
         with open(model_save_fn, 'rb') as data_file:
             print('Loading from {}'.format(model_save_fn))
@@ -701,6 +719,11 @@ elif config['mode'] == 'finetune_streaming':
                 model.load_state_dict(loaded_data['model_state_dict'])
             if "best_valid_loss" in loaded_data:
                 best_valid_loss = loaded_data['best_valid_loss']
+            if 'current_training_step' in loaded_data:
+                current_training_step = loaded_data['current_training_step']
+            if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                scheduler.load_state_dict(loaded_data['scheduler_state_dict'])
+                print(scheduler.state_dict())
 
     if config['finetune']['pretrain_model_fn'] is not None:
         model_fn = os.path.expandvars(config['finetune']['pretrain_model_fn'])
@@ -748,8 +771,7 @@ elif config['mode'] == 'finetune_streaming':
     train_losses = []
 
     patience_counter = 0
-    update_steps  = 0
-    for i in range(config['finetune']['max_epoch']):
+    for i in range(config['finetune']['training_max']['amount']):
         model.train()
         for tbi, (t_noised_batch, t_input_key_mask, t_bos_trunc, t_eos_trunc, t_output_key_mask, t_offsets) in enumerate(dnds_train):
 
@@ -799,16 +821,22 @@ elif config['mode'] == 'finetune_streaming':
                                     'current_iterating_order': cl_direct_noise_train.current_iterating_order,
                                     'model_state_dict': model.module.model.state_dict(),
                                     'optim_state_dict': optimizer.state_dict(),
-                                    'best_valid_loss': valid_loss_mean
+                                    'best_valid_loss': valid_loss_mean,
+                                    'current_training_step': current_training_step
                                 }
+                                if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                                    to_save['scheduler_state_dict'] = scheduler.state_dict()
                             else:
                                 to_save = {
                                     'current_iterating_idx': cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0],
                                     'current_iterating_order': cl_direct_noise_train.current_iterating_order,
                                     'model_state_dict': model.state_dict(),
                                     'optim_state_dict': optimizer.state_dict(),
-                                    'best_valid_loss': valid_loss_mean
+                                    'best_valid_loss': valid_loss_mean,
+                                    'current_training_step': current_training_step
                                 }
+                                if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                                    to_save['scheduler_state_dict'] = scheduler.state_dict()
                             torch.save(to_save, out_file)
                         patience_counter = 0
                         best_valid_loss = valid_loss_mean
@@ -824,8 +852,11 @@ elif config['mode'] == 'finetune_streaming':
                                 'current_iterating_order': cl_direct_noise_train.current_iterating_order,
                                 'model_state_dict': model.module.model.state_dict(),
                                 'optim_state_dict': optimizer.state_dict(),
-                                'best_valid_loss': best_valid_loss
+                                'best_valid_loss': best_valid_loss,
+                                'current_training_step': current_training_step
                             }
+                            if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                                to_save['scheduler_state_dict'] = scheduler.state_dict()
                         else:
                             to_save = {
                                 'current_iterating_idx': cl_direct_noise_train.current_iterating_idx -
@@ -833,8 +864,11 @@ elif config['mode'] == 'finetune_streaming':
                                 'current_iterating_order': cl_direct_noise_train.current_iterating_order,
                                 'model_state_dict': model.state_dict(),
                                 'optim_state_dict': optimizer.state_dict(),
-                                'best_valid_loss': best_valid_loss
+                                'best_valid_loss': best_valid_loss,
+                                'current_training_step': current_training_step
                             }
+                            if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                                to_save['scheduler_state_dict'] = scheduler.state_dict()
                         torch.save(to_save, out_file)
 
                 train_losses.clear()
@@ -848,10 +882,18 @@ elif config['mode'] == 'finetune_streaming':
                 out = model(t_noised_batch, t_eos_trunc, t_input_key_mask, t_output_key_mask, None)
                 loss = criterion(out.contiguous().view(-1, len(vocab)), t_bos_trunc.view(-1))
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1)
+            if config['optimizer']['grad_clip_norm'] > 0:
+                nn.utils.clip_grad_norm_(model.parameters(), config['optimizer']['grad_clip_norm'])
             train_losses.append(loss.item())
             optimizer.step()
-            update_steps += 1
+            current_training_step += 1
+            if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                scheduler.step()
+
+            if config['finetune']['training_max']['use'] == 'steps' and current_training_step >= \
+                    config['finetune']['training_max']['amount']:
+                print('Max steps reached.')
+                break
 
 elif config['mode'] == 'inference':
     if config['inference']['force_cpu']:
