@@ -809,7 +809,7 @@ elif config['mode'] == 'finetune_streaming':
 
                     train_loss_mean = torch.tensor(train_losses).mean()
                     valid_loss_mean = torch.tensor(valid_losses).mean()
-                    print('{}: Sentences Processed: {}/{} / Steps {} : Train:{:.4f}, Valid:{:.4f}({:.4f})'.format(i, cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0], len(cl_direct_noise_train), update_steps, train_loss_mean, valid_loss_mean, best_valid_loss))
+                    print('{}: Sentences Processed: {}/{} / Steps {} : Train:{:.4f}, Valid:{:.4f}({:.4f})'.format(i, cl_direct_noise_train.current_iterating_idx - t_noised_batch.shape[0], len(cl_direct_noise_train), current_training_step, train_loss_mean, valid_loss_mean, best_valid_loss))
 
                     if valid_loss_mean < best_valid_loss:
                         save_fn = os.path.expandvars(config['finetune']['best_model_save_fn'])
