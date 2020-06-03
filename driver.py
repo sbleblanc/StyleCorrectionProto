@@ -408,7 +408,7 @@ elif config['mode'] == 'pretrain_streaming':
                                lr=config['optimizer']['adam']['lr'],
                                betas=(config['optimizer']['adam']['beta_1'], config['optimizer']['adam']['beta_2']),
                                eps=config['optimizer']['adam']['eps'],
-                               weight_decay=config['optimizer']['sgd']['weight_decay'])
+                               weight_decay=config['optimizer']['adam']['weight_decay'])
     elif config['pretrain']['optimizer'] == 'sgd':
         optimizer = optim.SGD(model.parameters(),
                               lr=config['optimizer']['sgd']['lr'],
@@ -674,7 +674,7 @@ elif config['mode'] == 'finetune_streaming':
                                lr=config['optimizer']['adam']['lr'],
                                betas=(config['optimizer']['adam']['beta_1'], config['optimizer']['adam']['beta_2']),
                                eps=config['optimizer']['adam']['eps'],
-                               weight_decay=config['optimizer']['sgd']['weight_decay'])
+                               weight_decay=config['optimizer']['adam']['weight_decay'])
     elif config['finetune']['optimizer'] == 'sgd':
         optimizer = optim.SGD(model.parameters(),
                               lr=config['optimizer']['sgd']['lr'],
