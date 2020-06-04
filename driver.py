@@ -467,14 +467,17 @@ elif config['mode'] == 'pretrain_streaming':
 
     train_losses = []
     patience_counter = 0
-
+    max_reached = False
     for i in range(config['pretrain']['training_max']['amount']):
         model.train()
         if cl_train.group_indexing:
             current_groups_offsets = cl_train.group_offsets.clone()
         for tbi, (t_enc_in, t_enc_in_key_mask, t_dec_out, t_dec_in, t_dec_in_key_mask, t_offsets) in enumerate(pds_train):
-
-            if tbi % config['eval']['interval'] == 0:
+            if config['pretrain']['training_max']['use'] == 'steps' and current_training_step >= \
+                    config['pretrain']['training_max']['amount']:
+                print('Max steps reached.')
+                max_reached = True
+            if tbi % config['eval']['interval'] == 0 or max_reached:
                 model.eval()
                 valid_losses = []
                 with torch.no_grad():
@@ -564,26 +567,25 @@ elif config['mode'] == 'pretrain_streaming':
                 train_losses.clear()
                 model.train()
 
-            optimizer.zero_grad()
-            if in_multigpu_mode:
-                loss = model(t_dec_out, t_enc_in, t_dec_in, t_enc_in_key_mask, t_dec_in_key_mask, t_offsets)
-                loss = loss.mean()
+            if not max_reached:
+                optimizer.zero_grad()
+                if in_multigpu_mode:
+                    loss = model(t_dec_out, t_enc_in, t_dec_in, t_enc_in_key_mask, t_dec_in_key_mask, t_offsets)
+                    loss = loss.mean()
+                else:
+                    out = model(t_enc_in, t_dec_in, t_enc_in_key_mask, t_dec_in_key_mask, t_offsets)
+                    loss = criterion(out.contiguous().view(-1, len(cl_train.vocab)), t_dec_out.view(-1))
+                loss.backward()
+                if config['optimizer']['grad_clip_norm'] > 0:
+                    nn.utils.clip_grad_norm_(model.parameters(), config['optimizer']['grad_clip_norm'])
+                train_losses.append(loss.item())
+                optimizer.step()
+                current_training_step += 1
+                current_groups_offsets = cl_train.group_offsets.clone()
+                if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                    scheduler.step()
             else:
-                out = model(t_enc_in, t_dec_in, t_enc_in_key_mask, t_dec_in_key_mask, t_offsets)
-                loss = criterion(out.contiguous().view(-1, len(cl_train.vocab)), t_dec_out.view(-1))
-            loss.backward()
-            if config['optimizer']['grad_clip_norm'] > 0:
-                nn.utils.clip_grad_norm_(model.parameters(), config['optimizer']['grad_clip_norm'])
-            train_losses.append(loss.item())
-            optimizer.step()
-            current_training_step += 1
-            current_groups_offsets = cl_train.group_offsets.clone()
-            if config['optimizer']['scheduler']['use'] == 'one_cycle':
-                scheduler.step()
-
-        if config['pretrain']['training_max']['use'] == 'steps' and current_training_step >= config['pretrain']['training_max']['amount']:
-            print('Max steps reached.')
-            break
+                break
 
     print('DONE')
 
@@ -769,13 +771,16 @@ elif config['mode'] == 'finetune_streaming':
         print('Nothing is freezed')
 
     train_losses = []
-
+    max_reached = False
     patience_counter = 0
     for i in range(config['finetune']['training_max']['amount']):
         model.train()
         for tbi, (t_noised_batch, t_input_key_mask, t_bos_trunc, t_eos_trunc, t_output_key_mask, t_offsets) in enumerate(dnds_train):
-
-            if tbi % config['eval']['interval'] == 0:
+            if config['finetune']['training_max']['use'] == 'steps' and current_training_step + 1 >= \
+                    config['finetune']['training_max']['amount']:
+                max_reached = True
+                print('Max steps reached.')
+            if tbi % config['eval']['interval'] == 0 or max_reached:
                 model.eval()
                 valid_losses = []
                 with torch.no_grad():
@@ -874,26 +879,25 @@ elif config['mode'] == 'finetune_streaming':
                 train_losses.clear()
                 model.train()
 
-            optimizer.zero_grad()
-            if in_multigpu_mode:
-                loss = model(t_bos_trunc, t_noised_batch, t_eos_trunc, t_input_key_mask, t_output_key_mask, None)
-                loss = loss.mean()
+            if not max_reached:
+                optimizer.zero_grad()
+                if in_multigpu_mode:
+                    loss = model(t_bos_trunc, t_noised_batch, t_eos_trunc, t_input_key_mask, t_output_key_mask, None)
+                    loss = loss.mean()
+                else:
+                    out = model(t_noised_batch, t_eos_trunc, t_input_key_mask, t_output_key_mask, None)
+                    loss = criterion(out.contiguous().view(-1, len(vocab)), t_bos_trunc.view(-1))
+                loss.backward()
+                if config['optimizer']['grad_clip_norm'] > 0:
+                    nn.utils.clip_grad_norm_(model.parameters(), config['optimizer']['grad_clip_norm'])
+                train_losses.append(loss.item())
+                optimizer.step()
+                current_training_step += 1
+                if config['optimizer']['scheduler']['use'] == 'one_cycle':
+                    scheduler.step()
             else:
-                out = model(t_noised_batch, t_eos_trunc, t_input_key_mask, t_output_key_mask, None)
-                loss = criterion(out.contiguous().view(-1, len(vocab)), t_bos_trunc.view(-1))
-            loss.backward()
-            if config['optimizer']['grad_clip_norm'] > 0:
-                nn.utils.clip_grad_norm_(model.parameters(), config['optimizer']['grad_clip_norm'])
-            train_losses.append(loss.item())
-            optimizer.step()
-            current_training_step += 1
-            if config['optimizer']['scheduler']['use'] == 'one_cycle':
-                scheduler.step()
-
-            if config['finetune']['training_max']['use'] == 'steps' and current_training_step >= \
-                    config['finetune']['training_max']['amount']:
-                print('Max steps reached.')
                 break
+
 
 elif config['mode'] == 'inference':
     if config['inference']['force_cpu']:
