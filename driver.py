@@ -6,6 +6,54 @@ from stylecorrection.loaders.corpus import *
 from stylecorrection.models.wrappers import *
 from stylecorrection.models.transformer import TransformerS2S
 
+def get_finetune_dataset(which, config, train_cl, valid_cl):
+    if which == 'ca':
+        if config['finetune']['dataset']['ca']['shuffler'] == 'chunk':
+            shuffler = SentenceShuffler.chunk_shuffler(config['finetune']['dataset']['ca']['min_chunk_ratio'],
+                                                       config['finetune']['dataset']['ca']['max_chunk_ratio'])
+        elif config['finetune']['dataset']['ca']['shuffler'] == 'normal':
+            shuffler = SentenceShuffler.normal_shuffler(config['finetune']['dataset']['ca']['sigma'])
+
+        dnds_train = StreamingCANoiseDataset(train_cl,
+                                             replace_prob=config['finetune']['dataset']['ca']['replace_prob'],
+                                             del_prob=config['finetune']['dataset']['ca']['del_prob'],
+                                             ins_prob=config['finetune']['dataset']['ca']['ins_prob'],
+                                             keep_prob=config['finetune']['dataset']['ca']['keep_prob'],
+                                             mask_prob=config['finetune']['dataset']['ca']['mask_prob'],
+                                             shuffle_prob=config['finetune']['dataset']['ca']['shuffle_prob'],
+                                             shuffler=shuffler,
+                                             tokens_per_batch=config['finetune']['dataset']['tpb'],
+                                             max_trainable_tokens=config['finetune']['dataset']['tpb'],
+                                             device=device)
+        dnds_valid = StreamingCANoiseDataset(valid_cl,
+                                             replace_prob=config['finetune']['dataset']['ca']['replace_prob'],
+                                             del_prob=config['finetune']['dataset']['ca']['del_prob'],
+                                             ins_prob=config['finetune']['dataset']['ca']['ins_prob'],
+                                             keep_prob=config['finetune']['dataset']['ca']['keep_prob'],
+                                             mask_prob=config['finetune']['dataset']['ca']['mask_prob'],
+                                             shuffle_prob=config['finetune']['dataset']['ca']['shuffle_prob'],
+                                             shuffler=shuffler,
+                                             tokens_per_batch=config['finetune']['dataset']['tpb'],
+                                             max_trainable_tokens=config['finetune']['dataset']['tpb'],
+                                             device=device)
+
+    elif which == 'parallel':
+        dnds_train = StreamingParallelDataset(cl_direct_noise_train,
+                                              split_token=config['finetune']['dataset']['parallel']['split_token'],
+                                              reverse=config['finetune']['dataset']['parallel']['reverse'],
+                                              tokens_per_batch=config['finetune']['dataset']['tpb'],
+                                              max_trainable_tokens=config['finetune']['dataset']['tpb'],
+                                              device=device)
+        dnds_valid = StreamingParallelDataset(cl_direct_noise_valid,
+                                              split_token=config['finetune']['dataset']['parallel']['split_token'],
+                                              reverse=config['finetune']['dataset']['parallel']['reverse'],
+                                              tokens_per_batch=config['finetune']['dataset']['tpb'],
+                                              max_trainable_tokens=config['finetune']['dataset']['tpb'],
+                                              device=device)
+
+    return dnds_train, dnds_valid
+
+
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 parser = argparse.ArgumentParser()
@@ -607,49 +655,23 @@ elif config['mode'] == 'finetune_streaming':
         max_sent_len=config['finetune']['max_sent_len'],
         group_by_len=config['finetune']['group_by_len']
     )
-    if config['finetune']['dataset']['to_use'] == 'ca':
-        dnds_train = StreamingCANoiseDataset(cl_direct_noise_train,
-                                             replace_prob=config['finetune']['dataset']['ca']['replace_prob'],
-                                             del_prob=config['finetune']['dataset']['ca']['del_prob'],
-                                             ins_prob=config['finetune']['dataset']['ca']['ins_prob'],
-                                             keep_prob=config['finetune']['dataset']['ca']['keep_prob'],
-                                             mask_prob=config['finetune']['dataset']['ca']['mask_prob'],
-                                             sigma=config['finetune']['dataset']['ca']['sigma'],
-                                             tokens_per_batch=config['finetune']['dataset']['ca']['tpb'],
-                                             max_trainable_tokens=config['finetune']['dataset']['ca']['mttpb'],
-                                             device=device)
-        dnds_valid = StreamingCANoiseDataset(cl_direct_noise_valid,
-                                             replace_prob=config['finetune']['dataset']['ca']['replace_prob'],
-                                             del_prob=config['finetune']['dataset']['ca']['del_prob'],
-                                             ins_prob=config['finetune']['dataset']['ca']['ins_prob'],
-                                             keep_prob=config['finetune']['dataset']['ca']['keep_prob'],
-                                             mask_prob=config['finetune']['dataset']['ca']['mask_prob'],
-                                             sigma=config['finetune']['dataset']['ca']['sigma'],
-                                             tokens_per_batch=config['finetune']['dataset']['ca']['tpb'],
-                                             max_trainable_tokens=config['finetune']['dataset']['ca']['mttpb'],
-                                             device=device)
 
-    elif config['finetune']['dataset']['to_use'] == 'parallel':
-        dnds_train = StreamingParallelDataset(cl_direct_noise_train,
-                                              split_token=config['finetune']['dataset']['parallel']['split_token'],
-                                              reverse=config['finetune']['dataset']['parallel']['reverse'],
-                                              tokens_per_batch=config['finetune']['dataset']['parallel']['tpb'],
-                                              max_trainable_tokens=config['finetune']['dataset']['parallel']['tpb'],
-                                              device=device)
-        dnds_valid = StreamingParallelDataset(cl_direct_noise_valid,
-                                              split_token=config['finetune']['dataset']['parallel']['split_token'],
-                                              reverse=config['finetune']['dataset']['parallel']['reverse'],
-                                              tokens_per_batch=config['finetune']['dataset']['parallel']['tpb'],
-                                              max_trainable_tokens=config['finetune']['dataset']['parallel']['tpb'],
-                                              device=device)
+    if '+' in config['finetune']['dataset']['to_use']:
+        ds_split = config['finetune']['dataset']['to_use'].split('+')
+        train_datasets = []
+        valid_datasets = []
+        for ds in ds_split:
+            tds, vds = get_finetune_dataset(ds, config, cl_direct_noise_train, cl_direct_noise_valid)
+            train_datasets.append(tds)
+            valid_datasets.append(vds)
+        dnds_train = StreamingChainedDataset(cl_direct_noise_train, train_datasets,
+                                             config['finetune']['dataset']['tpb'], config['finetune']['dataset']['tpb'],
+                                             device)
+        dnds_valid = StreamingChainedDataset(cl_direct_noise_valid, valid_datasets,
+                                             config['finetune']['dataset']['tpb'], config['finetune']['dataset']['tpb'],
+                                             device)
     else:
-        pass
-        # dnds = DirectNoiseDataset(cl_direct_noise,
-        #                           del_prob=config['finetune']['dataset']['dn']['del_prob'],
-        #                           ins_prob=config['finetune']['dataset']['dn']['ins_prob'],
-        #                           keep_prob=config['finetune']['dataset']['dn']['keep_prob'],
-        #                           mask_prob=config['finetune']['dataset']['dn']['mask_prob'],
-        #                           device=device)
+        dnds_train, dnds_valid = get_finetune_dataset(config['finetune']['dataset']['to_use'], config, cl_direct_noise_train, cl_direct_noise_valid)
 
     model = TransformerS2S(
         len(vocab),
@@ -991,13 +1013,6 @@ elif config['mode'] == 'inference':
 
 
 elif config['mode'] == 'debug':
-    import spacy
-    import fastBPE
-
-
-    nlp = spacy.load('en', disable=['tagger', 'parser', 'ner', 'entity_linker', 'textcat', 'entity_ruler', 'sentencizer', 'merge_noun_chunks', 'merge_entities', 'merge_subtokens'])
-    bpe = fastBPE.fastBPE('temp/datasets/bcu_enwiki.30000.codes', 'temp/datasets/bcu_enwiki_spacy.30000.bpe.vocab')
-    # device = 'cpu'
 
     vocab_path = 'temp/datasets/bcu_enwiki_30000_bpe_vocab.h5'
     with h5py.File(vocab_path, 'r') as h5_file:
@@ -1007,6 +1022,30 @@ elif config['mode'] == 'debug':
             vocab_special_chars = vocab[5:5 + additional_special_tokens].tolist()
         else:
             vocab_special_chars = []
+
+    ft_corpus_path = 'temp/datasets/gec_combined_real_clean.bpe.h5'
+    cl = StreamingH5CorpusLoader.load_and_split(
+        ft_corpus_path,
+        use_split_id=0,
+        forced_vocab=(vocab, vocab_special_chars),
+        device=device
+    )[0]
+    shuffler = SentenceShuffler.chunk_shuffler()
+    par_ds = StreamingParallelDataset(cl)
+    noise_ds = StreamingCANoiseDataset(cl, shuffler, 0., 0., 0., 1., 0., 0.)
+    ds = StreamingChainedDataset(cl, [par_ds, noise_ds])
+    b = next(iter(ds))
+
+
+    import spacy
+    import fastBPE
+
+
+    nlp = spacy.load('en', disable=['tagger', 'parser', 'ner', 'entity_linker', 'textcat', 'entity_ruler', 'sentencizer', 'merge_noun_chunks', 'merge_entities', 'merge_subtokens'])
+    bpe = fastBPE.fastBPE('temp/datasets/bcu_enwiki.30000.codes', 'temp/datasets/bcu_enwiki_spacy.30000.bpe.vocab')
+    # device = 'cpu'
+
+
 
     model = TransformerS2S(
         len(vocab),

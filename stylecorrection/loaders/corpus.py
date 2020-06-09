@@ -1,10 +1,12 @@
 import tarfile
 import io
+import math
 import h5py
 import torch
 import torch.nn as nn
 import numpy as np
 import itertools as it
+from enum import Enum
 from collections import Counter
 from typing import Callable, List, Tuple, Dict, Union
 import stylecorrection.utils.cython_utils as cu
@@ -1178,23 +1180,74 @@ class StreamingBaseDataset(object):
     def process_example(self, example: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         raise NotImplementedError
 
+class ShufflerType(Enum):
+    NORMAL_NOISE = 1
+    CHUNK_SWAP = 2
+
+class SentenceShuffler(object):
+
+    @classmethod
+    def normal_shuffler(cls, sigma: float = 0.5):
+        return cls(ShufflerType.NORMAL_NOISE, sigma, 0., 0.)
+
+    @classmethod
+    def chunk_shuffler(cls, min_chunk_ratio: float = 0.3, max_chunk_ratio: float = 0.5):
+        return cls(ShufflerType.CHUNK_SWAP, 0., min_chunk_ratio, max_chunk_ratio)
+
+    def __init__(self,
+                 shuffle_type: ShufflerType,
+                 sigma: float,
+                 min_chunk_ratio: float,
+                 max_chunk_ratio: float):
+        self.shuffle_type = shuffle_type
+        self.sigma = sigma
+        self.min_chunk_ratio = min_chunk_ratio
+        self.max_chunk_ratio = max_chunk_ratio
+
+    def __call__(self, sentence: torch.Tensor):
+        if self.shuffle_type == ShufflerType.NORMAL_NOISE:
+            shuffled_indexes = np.array(
+                [i + np.random.normal(loc=0, scale=self.sigma) for i in range(len(sentence))]).argsort()
+            shuffled = sentence[shuffled_indexes]
+        elif self.shuffle_type == ShufflerType.CHUNK_SWAP:
+            min_len = math.floor(sentence.shape[0] * self.min_chunk_ratio)
+            max_len = math.ceil(sentence.shape[0] * self.max_chunk_ratio)
+            if min_len < 2:
+                shuffled = sentence
+            else:
+                shuffled = torch.zeros_like(sentence)
+                chunk_len = torch.randint(min_len, max_len, [1]).item()
+                chunk_start = torch.randint(0, sentence.shape[0] - chunk_len + 1, [1]).item()
+                chunk_end = chunk_start + chunk_len
+                split_idx = torch.randint(chunk_start, chunk_start + chunk_len, [1]).item()
+                split_len = chunk_end - split_idx
+                shuffled[:chunk_start] = sentence[:chunk_start]
+                shuffled[chunk_start:chunk_start+split_len] = sentence[split_idx:chunk_end]
+                shuffled[chunk_start+split_len:chunk_end] = sentence[chunk_start:split_idx]
+                shuffled[chunk_end:] = sentence[chunk_end:]
+
+        return shuffled
+
 class StreamingCANoiseDataset(StreamingBaseDataset):
 
     def __init__(self,
                  src_ds: StreamingH5CorpusLoader,
+                 shuffler: SentenceShuffler,
                  replace_prob: float = 0.1,
                  del_prob: float = 0.1,
                  ins_prob: float = 0.1,
                  keep_prob: float = 0.3,
                  mask_prob: float = 0.4,
-                 sigma: float = 0.5,
+                 shuffle_prob: float = 0.1,
                  tokens_per_batch: int = 1000,
                  max_trainable_tokens: int = 1000,
                  device: str = "cpu"):
         super(StreamingCANoiseDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch, max_trainable_tokens=max_trainable_tokens, device=device)
         self.action_probs = torch.tensor([replace_prob, del_prob, ins_prob, keep_prob, mask_prob]).to(device)
-        self.sigma = sigma
+        self.shuffle_probs = torch.tensor([1 - shuffle_prob, shuffle_prob]).to(device)
+        self.shuffler = shuffler
         assert self.action_probs.sum().allclose(torch.tensor(1.))
+        assert 0. <= shuffle_prob <= 1.
 
     def process_example(self, example: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         current_noised_example = []
@@ -1212,12 +1265,18 @@ class StreamingCANoiseDataset(StreamingBaseDataset):
                 current_noised_example.append(example[ei + 1])
             elif a == 4:  # mask
                 current_noised_example.append(self.src_ds.mask_idx)
-        ne = torch.zeros(len(current_noised_example) + 2, dtype=torch.long)
+
         current_noised_example = torch.tensor(current_noised_example, dtype=torch.long)
+        ne = torch.zeros(len(current_noised_example) + 2, dtype=torch.long)
         ne[[0, -1]] = example[[0, -1]]
-        shuffled_indexes = np.array(
-            [i + np.random.normal(loc=0, scale=self.sigma) for i in range(len(current_noised_example))]).argsort()
-        ne[1:-1] = current_noised_example[shuffled_indexes]
+
+        should_shuffle = self.shuffle_probs.multinomial(1).item()
+        if should_shuffle:
+            shuffled = self.shuffler(current_noised_example)
+            ne[1:-1] = shuffled
+        else:
+            ne[1:-1] = current_noised_example
+
         return ne, example[:-1], example[1:], None
 
 class StreamingMASSPretrainingDataset(StreamingBaseDataset):
@@ -1329,6 +1388,26 @@ class StreamingParallelDataset(StreamingBaseDataset):
             clean_example_output = example[split_position+1:]
 
         return dirty_example, clean_example_input, clean_example_output, None
+
+
+class StreamingChainedDataset(StreamingBaseDataset):
+
+    def __init__(self,
+                 src_ds: StreamingH5CorpusLoader,
+                 datasets: List[StreamingBaseDataset],
+                 tokens_per_batch: int = 1000,
+                 max_trainable_tokens: int = 1000,
+                 device: str = "cpu"):
+        super(StreamingChainedDataset, self).__init__(src_ds, tokens_per_batch=tokens_per_batch,
+                                                      max_trainable_tokens=max_trainable_tokens, device=device)
+        self.datasets = datasets
+
+    def process_example(self, example: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        for i, d in enumerate(self.datasets):
+            example, dec_input, dec_output, offsets = d.process_example(example)
+        return example, dec_input, dec_output, offsets
+
+
 
 # class StreamingCANoiseDataset(object):
 #
