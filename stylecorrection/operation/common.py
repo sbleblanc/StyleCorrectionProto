@@ -56,8 +56,8 @@ class Operation(object):
 
         if self.config['multi_gpu'] and torch.cuda.device_count() > 1:
             self.in_multigpu_mode = True
-            self._model = DataParallelCELWrapper(self.model, criterion, len_vocab)
-            self._model = nn.DataParallel(self.model)
+            self._model = DataParallelCELWrapper(self._model, criterion, len_vocab)
+            self._model = nn.DataParallel(self._model)
 
         if pretrained_fn:
             with open(pretrained_fn, 'rb') as in_file:
