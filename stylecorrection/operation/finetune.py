@@ -334,7 +334,7 @@ class FinetuneStreamingOperation(Operation):
                                 if self.scheduler:
                                     to_save['scheduler_state_dict'] = self.scheduler.state_dict()
                                 torch.save(to_save, out_file)
-                            self.best_valid_loss = valid_loss_mean
+                            self.best_valid_loss = valid_loss
 
                         save_fn = os.path.expandvars(self.config['finetune']['current_model_save_fn'])
                         with open(save_fn, 'wb') as out_file:
