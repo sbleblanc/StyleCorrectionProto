@@ -58,7 +58,8 @@ class H5CorpusLoader(object):
             for i, b in enumerate(books):
                 print('Processing {}/{} : {}'.format(i, len(books), b.name))
                 reader = io.TextIOWrapper(tar_file.extractfile(b))
-                raw_text = reader.read(None).splitlines()
+                raw_text = reader.read(None).split('\n')
+                raw_text = raw_text[:-1] #remove last empty split
                 for l in cls.__process_lines(raw_text, tokenize, preprocess):
                     if len(l) > max_len:
                         continue
@@ -83,7 +84,8 @@ class H5CorpusLoader(object):
                 for i, b in enumerate(books):
                     print('{:.2%}'.format(float(line)/sent_count))
                     reader = io.TextIOWrapper(tar_file.extractfile(b))
-                    raw_text = reader.read(None).splitlines()
+                    raw_text = reader.read(None).split('\n')
+                    raw_text = raw_text[:-1]  # remove last empty split
                     for l in cls.__process_lines(raw_text, tokenize, preprocess):
                         if len(l) > max_len:
                             continue
@@ -336,7 +338,8 @@ class StreamingH5CorpusLoader(object):
             for i, b in enumerate(books):
                 print('Processing {}/{} : {}'.format(i, len(books), b.name))
                 reader = io.TextIOWrapper(tar_file.extractfile(b))
-                raw_text = reader.read(None).splitlines()
+                raw_text = reader.read(None).split('\n')
+                raw_text = raw_text[:-1]  # remove last empty split
                 for l in cls.__process_lines(raw_text, tokenize, preprocess):
                     if len(l) > max_len:
                         continue
@@ -364,7 +367,8 @@ class StreamingH5CorpusLoader(object):
                 for i, b in enumerate(books):
                     print('{:.2%}'.format(float(line)/sent_count))
                     reader = io.TextIOWrapper(tar_file.extractfile(b))
-                    raw_text = reader.read(None).splitlines()
+                    raw_text = reader.read(None).split('\n')
+                    raw_text = raw_text[:-1]  # remove last empty split
                     for l in cls.__process_lines(raw_text, tokenize, preprocess):
                         if len(l) > max_len:
                             continue
