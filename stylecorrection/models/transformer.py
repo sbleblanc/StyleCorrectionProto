@@ -68,6 +68,64 @@ class TransformerS2S(nn.Module):
         encoded = self.encode(enc_input, input_key_mask)
         return self.decode(encoded, input_key_mask, dec_input, output_key_mask, out_offsets)
 
+    def beam_decode_3(self,
+                      input: torch.Tensor,
+                      output_seed: torch.Tensor,
+                      beam_width: int = 5,
+                      max_len: int = 175,
+                      end_token: int = -1,
+                      noising_beta: float = 0.,
+                      topmost_noising: bool = False,
+                      temperature: float = 1.,
+                      top_only: bool = True,
+                      return_scores: bool = False,
+                      device: str = 'cpu'):
+        if input.ndim == 1:
+            input = input.unsqueeze(0)
+
+        completed_beams = []
+        encoded_input = self.encode(input, None)
+        scores = torch.zeros(1).to(device)
+        candidates = output_seed.unsqueeze(0)
+        with torch.no_grad():
+            for pi in range(max_len):
+                decoded = self.decode(encoded_input.repeat_interleave(candidates.shape[0], 1), None, candidates, None, None)
+                probs, indices = nn.functional.log_softmax(decoded / temperature, dim=-1).sort(dim=-1, descending=True)
+                probs = probs[:, -1, :]
+                indices = indices[:, -1, :]
+                temp_scores = scores.repeat_interleave(probs.shape[-1]).view(-1, probs.shape[-1]) + probs
+                if noising_beta > 0.:
+                    noise = torch.rand_like(temp_scores) * noising_beta
+                    temp_scores += noise
+                final_scores, final_indices = temp_scores.view(-1).sort(descending=True)
+                # scores = scores.repeat_interleave(probs.shape[-1]).view(-1)[final_indices[:beam_width]] + probs.contiguous().view(-1)[final_indices[:beam_width]]
+                scores = final_scores[:beam_width]
+                candidates_previous = final_indices[:beam_width] // probs.shape[-1]
+                new_candidates = torch.zeros(beam_width, pi+2, dtype=torch.long).to(device)
+                new_candidates[:, :-1] = candidates[candidates_previous]
+                new_candidates[:, -1] = indices.contiguous().view(-1)[final_indices[:beam_width]]
+                potential_finished = new_candidates[:, -1] == end_token
+                finished = potential_finished.nonzero().view(-1)
+                unfinished = (~potential_finished).nonzero().view(-1)
+                candidates = new_candidates[unfinished]
+                for idx in finished:
+                    completed_beams.append((scores[idx].item(), new_candidates[idx].cpu()))
+                    if len(completed_beams) == beam_width:
+                        break
+                scores = scores[unfinished]
+                if candidates.ndim == 0 or len(completed_beams) == beam_width:
+                    break
+
+        if len(completed_beams) != beam_width:
+            for i in range(beam_width - len(completed_beams)):
+                completed_beams.append((scores[i].item(), candidates[i]))
+
+        completed_beams = sorted(completed_beams, key=lambda x: x[0], reverse=True)
+        if return_scores:
+            return completed_beams
+        else:
+            return [b for s, b in completed_beams]
+
     def beam_decode_2(self,
                       input: torch.Tensor,
                       output_seed: torch.Tensor,

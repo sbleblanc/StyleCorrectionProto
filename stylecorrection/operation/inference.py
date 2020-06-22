@@ -20,7 +20,7 @@ class InferenceOperation(Operation):
 
         encoded = cl.encode_sentence(line).to(device)
 
-        beam_decoded = model.beam_decode_2(
+        beam_decoded = model.beam_decode_3(
             encoded,
             torch.tensor([cl.bos_idx], dtype=torch.long).to(device),
             beam_width=beam_width,
@@ -41,7 +41,7 @@ class InferenceOperation(Operation):
         if config['inference']['force_cpu']:
             self.device = 'cpu'
 
-        if config['inference']['preprocess']['activate']:
+        if config['inference']['preprocess']:
             from stylecorrection.utils.preprocess import SpacyBPEPreprocess
             codes_fn = os.path.expandvars(config['preprocess']['bpe_codes_fn'])
             bpe_vocab_fn = os.path.expandvars(config['preprocess']['bpe_vocab_fn'])
@@ -93,7 +93,7 @@ class InferenceOperation(Operation):
                     if li < self.config['inference']['line_offset']:
                         continue
                     line = line.strip()
-                    if self.config['inference']['preprocess']['activate']:
+                    if self.config['inference']['preprocess']:
                         line = self.spacy_bpe_pp(line)
                     print('IN  : {}'.format(line))
                     if self.config['inference']['max_len'] > 0 and len(line.split(' ')) > self.config['inference']['max_len']:
