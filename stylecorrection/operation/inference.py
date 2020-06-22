@@ -20,7 +20,7 @@ class InferenceOperation(Operation):
 
         encoded = cl.encode_sentence(line).to(device)
 
-        beam_decoded = model.beam_decode_3(
+        beam_decoded = model.beam_decode_4(
             encoded,
             torch.tensor([cl.bos_idx], dtype=torch.long).to(device),
             beam_width=beam_width,
@@ -74,7 +74,7 @@ class InferenceOperation(Operation):
         else:
             self.buffering = 1
 
-    def __infer(self, line: str):
+    def _infer(self, line: str):
         return self.infer(
             self.cl,
             line,
@@ -100,7 +100,7 @@ class InferenceOperation(Operation):
                         print('TOO LONG')
                         continue
 
-                    decoded_sentence = self.__infer(line)
+                    decoded_sentence = self._infer(line)
 
                     if self.config['inference']['remove_bpe_placeholder']:
                         decoded_sentence = decoded_sentence.replace("@@ ", "")
