@@ -20,7 +20,7 @@ class InferenceOperation(Operation):
 
         encoded = cl.encode_sentence(line).to(device)
 
-        beam_decoded = model.beam_decode_4(
+        beam_decoded = model.beam_decode_3(
             encoded,
             torch.tensor([cl.bos_idx], dtype=torch.long).to(device),
             beam_width=beam_width,
