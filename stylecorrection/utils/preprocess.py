@@ -1,7 +1,15 @@
 import spacy
 import fastBPE
+import os
+from stylecorrection.utils.config import PreprocessConfig
 
 class SpacyBPEPreprocess(object):
+
+    @classmethod
+    def from_conf(cls, preprocess_conf: PreprocessConfig):
+        codes_fn = os.path.expandvars(preprocess_conf.bpe_codes_fn)
+        bpe_vocab_fn = os.path.expandvars(preprocess_conf.bpe_vocab_fn)
+        return cls(codes_fn, bpe_vocab_fn)
 
     def __init__(self,
                  bpe_codes_fn: str,

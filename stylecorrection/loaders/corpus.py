@@ -9,6 +9,7 @@ import itertools as it
 from enum import Enum
 from collections import Counter
 from typing import Callable, List, Tuple, Dict, Union
+from stylecorrection.utils.config import ShufflerType
 import stylecorrection.utils.cython_utils as cu
 
 
@@ -1184,9 +1185,7 @@ class StreamingBaseDataset(object):
     def process_example(self, example: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         raise NotImplementedError
 
-class ShufflerType(Enum):
-    NORMAL_NOISE = 1
-    CHUNK_SWAP = 2
+
 
 class SentenceShuffler(object):
 
