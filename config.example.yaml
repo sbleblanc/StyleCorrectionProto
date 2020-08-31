@@ -135,7 +135,7 @@ gleu: !gleu
   n: 4
   # Number of iterations
   iter: 500
-  # Get result per sentences
+  # Get result per sentences. Should be False if used for finetuning.
   sent: False
   # Preprocess the source sentences before using in seq2seq model
   preprocess: True
@@ -321,7 +321,8 @@ manual_eval: !manual_eval
   beam_width: 8
   # Decoding maximum length based on the source sentence length
   max_len_scale: 1.5
-  # Sentences to correct. Number of dirty and clean should match.
+  # Sentences to correct. Must be preprocessed and tokenized like the pretraining corpus.
+  # Number of dirty and clean should match.
   # 'dirty' should contain the sentence to correct and the associated 'clean' should be the expected output
   sample_corrections: !sample_corrections
     dirty:
