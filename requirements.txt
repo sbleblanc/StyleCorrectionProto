@@ -1,0 +1,8 @@
+en-core-web-sm>=2.2.5
+fastBPE>=0.1.1
+h5py>=2.10.0
+numpy>=1.18.1
+PyYAML>=5.3
+scipy>=1.4.1
+spacy>=2.2.3
+torch>=1.4.0
