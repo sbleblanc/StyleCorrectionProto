@@ -1,5 +1,17 @@
-from setuptools import setup, find_packages
-from Cython.Build import cythonize
+from setuptools import setup, find_packages, Extension
+
+try:
+    from Cython.Build import cythonize
+except ImportError:
+    use_cython = False
+else:
+    use_cython = True
+
+ext_modules = []
+if use_cython:
+    ext_modules += cythonize("stylecorrection/utils/cython_utils.pyx")
+else:
+    ext_modules += [Extension('utils.cython_utils', 'stylecorrection/utils/cython_utils.c')]
 
 with open('README.md', 'r') as f:
     long_description = f.read()
@@ -25,5 +37,5 @@ setup(
         'numpy>=1.18.1',
         'scipy>=1.4.1'
     ],
-    ext_modules=cythonize("stylecorrection/utils/cython_utils.pyx")
+    ext_modules=ext_modules
 )

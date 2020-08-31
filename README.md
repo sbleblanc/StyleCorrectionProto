@@ -11,12 +11,15 @@ This projet is not intended to be used as a general solution for this problem bu
 With this project, you will be able to pretrain a Transformer sequence to sequence model using either the MASS or BART technique. This pretrained model will then be able to be finetuned using either a parallel dataset or a clean dataset with dynamic error generation using configurable random noise. Inference can then be done on the final model. If an error generating model has been trained (i.e. dirty to clean), noising can be applied to the beam decoding scores during inference to have a more diverse set of errors.
 
 ## Requirements
-- Python 3.8
-- torch
-- SpaCy
-- fastBPE
-- h5py
-- yaml
+- `Python >= 3.8`
+- `torch >= 1.4.0`
+- `spacy >= 2.2.3`
+- `fastBPE >= 0.1.1`
+- `h5py >= 2.10.0`
+- `PyYAML >= 5.3`
+- `numpy >= 1.18.1`
+- `scipy >= 1.4.1`
+- `en-core-web-sm >= 2.2.5`
 
 ## Intended flow of execution
 The whole process is divided in several independent steps that are executed seperatly one at the time. A normal ordering of these steps would be :
