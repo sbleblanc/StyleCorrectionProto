@@ -125,3 +125,11 @@ Mode used to correct sentences manually selected. This mode is intended to test 
 - Text file with source sentences to correct
 
 Mode used to do inference with a finetuned model. It will process each sentence in the source file and output the best decoded sentence on screen and to the specified text file. If the source file is not preprocessed, the *preprocess* option can be set to True and each sentence will be tokenized with SpaCy, BPE will be applied and the text will be put in lowercase. To preprocess the text differently, either change the code or provide a source text file with preprocessed sentences. Following this [paper](https://www.aclweb.org/anthology/N18-1057.pdf), it is possible to noise the beam decoding scores. This is useful for generating errors that are more diverse if a reverse model has been trained (i.e. dirty to clean). The bigger the *noising_beta* is, the bigger the noise will be. The *temperature* configuration was added to help with the noising since sometimes the best decoding candidate has a score that is a lot better than the other beam candidats, so even with the noise, less probable sentences are not often picked. Basically, the beam decoding scores are divided by the temperature before the softmax is applied. So the bigger the temperature is, the smaller the gap gets between the scores making the noise more effective.
+
+## Running an experiment
+To run you need to call `driver.py` and passing it a configuration file like:
+```buildoutcfg
+python -u driver.py -c config.example.yaml
+```
+
+Everything is controlled by the configuration file.
