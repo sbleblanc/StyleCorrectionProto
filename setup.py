@@ -31,7 +31,6 @@ setup(
         'torch>=1.4.0',
         'spacy>=2.2.3',
         'fastBPE>=0.1.1',
-        'en-core-web-sm>=2.2.5',
         'h5py>=2.10.0',
         'PyYAML>=5.3',
         'numpy>=1.18.1',
