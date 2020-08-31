@@ -31,6 +31,8 @@ The whole process is divided in several independent steps that are executed sepe
 
 ## Execution Modes
 
+These are the different execution mode that can be used. The specifics of each can be understood in the comments of the [sample configuration file](./config.example.yaml).
+
 ### hd5_gen
 <ins>Configurations section required</ins> :
 - hd5_gen
@@ -38,7 +40,12 @@ The whole process is divided in several independent steps that are executed sepe
 <ins>Files Required</ins> :
 - Raw corpus compressed in a tar.gz
 
-Mode used to convert a raw corpus into the required hd5 format. The source raw corpus should be in a tar.gz archive with the text files at the root. The method was intended for datasets like BookCorpus which are divided in thousands of different files. So, raw datasets **SHOULD NOT** be combined before compressing to tar.gz since each document in the archive is loaded in memory completely. If a document is too large, you will most likely run out of memory. A big document can be split into multiple smaller one before compressing if this is the case. The current implementation assumes the raw corpus has been tokenized and preprocessed. It will split words based on spaces. The code can be adapted so that the preprocessing and/or tokenization is done at this step, but keep in mind that the way it is implemented now, the corpus is processed at a sentence level (a sentence being a single split of the whole corpus on newline characters). For example, BPE could be applied at this step, but the codes must be pre-computed (e.g. using fastBPE).
+Mode used to convert a raw corpus into the required hd5 format. The source raw corpus should be in a tar.gz archive with the text files at the root. The method was intended for datasets like BookCorpus which are divided in thousands of different files. So, raw datasets **SHOULD NOT** be combined before compressing to tar.gz since each document in the archive is loaded in memory completely. If a document is too large, you will most likely run out of memory. A big document can be split into multiple smaller one before compressing if this is the case. The current implementation assumes the raw corpus to be :
+- Sentencized : Sentences must be seperated by a newline character (\n).
+- Tokenized : The text should be tokenized with SpaCy
+- Byte Pair Encoding applied : BPE should be applied using fastBPE
+
+ It will split words based on spaces. The code can be adapted so that the preprocessing and/or tokenization is done at this step, but keep in mind that the way it is implemented now, the corpus is processed at a sentence level (a sentence being a single split of the whole corpus on newline characters). For example, BPE could be applied at this step, but the codes must be pre-computed (e.g. using fastBPE).
 
 ### gen_split
 <ins>Configurations section required</ins> :
@@ -86,7 +93,7 @@ Mode used to pretrain a model. A hd5 dataset with at least one split generated a
 - Vocabulary hd5 file used for pretraining
 - (optional) source and references text files for GLEU evaluation
 
-Mode used to finetune a pretrained model. The transformer model configurations should be the same as during the pretraining. The finetuning corpus should be preprocessed the same way as the pretraining corpus. If GLEU is used to dertermine the best model, the **gleu** section in the configurations should be set. If the *preprocess* option is set for gleu, the **preprocess** section in the configuration must be set. The preprecessing involves tokenizing with SpaCy, applying BPE using the codes computed with fastBPE for the pretraining and putting everything in lowercase. The GLEU evaluation was intended to be used with the *dev* set of the JFLEG evaluation corpus. Before the checkpoints are saved, a random sentence is processed from the validation set and the result is shown on screen with the loss metrics.
+Mode used to finetune a pretrained model. The transformer model configurations should be the same as during the pretraining. The finetuning corpus should be preprocessed the same way as the pretraining corpus. If GLEU is used to dertermine the best model, the **gleu** section in the configurations should be set. If the *preprocess* option is set for gleu, the **preprocess** section in the configuration must be set. The preprecessing involves tokenizing with SpaCy, applying BPE (using the codes computed with fastBPE for the pretraining) and putting everything in lowercase. The GLEU evaluation was intended to be used with the *dev* set of the [JFLEG evaluation corpus](https://github.com/keisks/jfleg). Before the checkpoints are saved, a random sentence is processed from the validation set and the result is shown on screen with the loss metrics.
 
 If the **parallel** dataset is used, the raw finetuning dataset must be formated correctly before converting to the required hd5 format. Parallel sentences must be combined on the same line with a splitting token in the middle (e.g. helo <split> hello). This token must be specified in the hd5_gen configuration and in the *dataset* section of the finetune configurations. It must also be tokenized and preprocessed like the pretraining dataset.
 
