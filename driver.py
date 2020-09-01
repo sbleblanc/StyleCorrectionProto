@@ -82,6 +82,7 @@ elif config.global_conf.mode == OperationModes.VOCAB_DUMP:
 elif config.global_conf.mode == OperationModes.PRETRAIN:
     operation = PretrainOperation(
         config.global_conf,
+        config.eval,
         config.transformer_s2s,
         config.pretrain,
         config.optimizer,

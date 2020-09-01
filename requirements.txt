@@ -1,4 +1,4 @@
-fastBPE>=0.1.1
+fastBPE>=0.1.0
 h5py>=2.10.0
 numpy>=1.18.1
 PyYAML>=5.3

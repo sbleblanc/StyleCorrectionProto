@@ -614,7 +614,7 @@ class StreamingH5CorpusLoader(object):
             vocab_ds = h5_file.create_dataset('vocab', (len(self.vocab),), dtype=dt)
             prob_ds = h5_file.create_dataset('unigram_prob', (len(self.vocab),), dtype=np.float)
             vocab_ds[:] = self.vocab
-            prob_ds[:] = self.unigram_probs
+            prob_ds[:] = self.unigram_probs.cpu()
             vocab_ds.attrs['additional_special_tokens'] = self.additional_special_tokens
 
     def __len__(self):

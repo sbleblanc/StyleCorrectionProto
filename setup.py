@@ -11,7 +11,7 @@ ext_modules = []
 if use_cython:
     ext_modules += cythonize("stylecorrection/utils/cython_utils.pyx")
 else:
-    ext_modules += [Extension('utils.cython_utils', 'stylecorrection/utils/cython_utils.c')]
+    ext_modules += [Extension('stylecorrection.utils.cython_utils', ['stylecorrection/utils/cython_utils.c'])]
 
 with open('README.md', 'r') as f:
     long_description = f.read()
@@ -30,7 +30,7 @@ setup(
     install_requires=[
         'torch>=1.4.0',
         'spacy>=2.2.3',
-        'fastBPE>=0.1.1',
+        'fastBPE>=0.1.0',
         'h5py>=2.10.0',
         'PyYAML>=5.3',
         'numpy>=1.18.1',

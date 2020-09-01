@@ -2,7 +2,7 @@ import inspect
 import os
 import h5py
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 
 class TrainingMax(Enum):
@@ -137,7 +137,7 @@ class GenerateHd5Config(BaseConfig):
                  corpus_tar_gz: str,
                  topk: int = 0,
                  max_len: int = 9999999,
-                 additional_tokens: list = None,
+                 additional_tokens: list = [],
                  valid_ratio: float = 0.8):
         super(GenerateHd5Config, self).__init__(locals())
         self.h5_fn = h5_fn
@@ -186,15 +186,8 @@ class PreprocessConfig(BaseConfig):
                  bpe_codes_fn: str,
                  bpe_vocab_fn: str):
         super(PreprocessConfig, self).__init__(locals())
-        if os.path.exists(bpe_codes_fn):
-            self.bpe_codes_fn = bpe_codes_fn
-        else:
-            raise FileNotFoundError('(Preprocess)(bpe_codes_fn) {} not found'.format(bpe_codes_fn))
-
-        if os.path.exists(bpe_vocab_fn):
-            self.bpe_vocab_fn = bpe_vocab_fn
-        else:
-            raise FileNotFoundError('(Preprocess)(bpe_vocab_fn) {} not found'.format(bpe_vocab_fn))
+        self.bpe_codes_fn = bpe_codes_fn
+        self.bpe_vocab_fn = bpe_vocab_fn
 
 
 class ModelFilenameConfig(BaseConfig):

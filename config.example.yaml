@@ -53,6 +53,7 @@ hd5_gen: !hd5_gen
   # Max length of sentences to consider
   max_len: 9999999
   # Additional special tokens to add to the vocabulary. Used to create parallel datasets.
+  # Should be set to [] if no additional tokens are used.
   additional_tokens:
     - '<split>'
   # Ratio of sentences to take as a validation set
@@ -71,7 +72,7 @@ vocab_dump: !vocab_dump
     vocab_fn: temp/datasets/pretrain_vocab.h5
     # Which train/valid split to use from the h5 dataset
     valid_split_id: 0
-  # Top k most frequent words to keep as long as the frequency is above the min_freq
+  # Top k most frequent words to keep as long as the frequency is above the min_freq. 0 will keep all the words.
   vocab_topk: 50000
   # Minimum frequency of a word to be included
   min_freq: 0

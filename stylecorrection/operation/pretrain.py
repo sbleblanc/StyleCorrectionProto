@@ -8,12 +8,14 @@ class PretrainOperation(TrainableOperation):
 
     def __init__(self,
                  global_conf: GlobalConfig,
+                 eval_conf: EvaluationConfig,
                  model_conf: TransformerConfig,
                  pretrain_conf: PretrainConfig,
                  optimizer_conf: OptimizerConfig,
                  device: str):
         super(PretrainOperation, self).__init__(
             global_conf,
+            eval_conf,
             device,
             model_conf=model_conf,
             optimizer_conf=optimizer_conf,
