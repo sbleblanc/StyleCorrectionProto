@@ -24,7 +24,7 @@ class Hd5GenOperation(Operation):
                 h5_fn,
                 os.path.expandvars(self.hd5_config.corpus_tar_gz),
                 lambda x: x.strip().split(' '),
-                lambda x: x.replace('\x85', '').replace('\u2028', '').lower(),
+                lambda x: x.replace('\x85', '').replace('\u2028', ''),
                 self.hd5_config.topk,
                 self.hd5_config.max_len,
                 additional_tokens
