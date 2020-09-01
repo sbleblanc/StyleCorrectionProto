@@ -426,6 +426,13 @@ class PretrainConfig(BaseConfig):
         else:
             raise ValueError('(Pretrain) optimizer can only be adam or sgd')
 
+        if algo == 'mass':
+            self.algo = PretrainAlgo.MASS
+        elif algo == 'bart':
+            self.algo = PretrainAlgo.BART
+        else:
+            raise ValueError('(Pretrain) algo can only be mass or bart')
+
         self.hd5_dataset = hd5_dataset
         self.max_sent_len = max_sent_len
         self.algo = algo
