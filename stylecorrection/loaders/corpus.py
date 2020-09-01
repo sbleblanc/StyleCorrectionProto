@@ -725,6 +725,8 @@ class StreamingH5CorpusLoader(object):
             self.current_group = state['current_group']
             self.group_selector = state['current_group_selector']
             self.group_offsets = state['current_group_offsets']
+            if self.group_selector.sum() == 0:
+                self.generate_iterating_order = True
         else:
             self.current_iterating_idx = state['current_iterating_idx']
             self.current_iterating_order = state['current_iterating_order']

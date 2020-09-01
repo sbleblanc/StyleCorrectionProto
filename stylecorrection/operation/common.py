@@ -205,7 +205,7 @@ class TrainableOperation(Operation):
 
         if os.path.exists(model_save_fn):
             with open(model_save_fn, 'rb') as data_file:
-                print('Loading from {}'.format(model_save_fn))
+                print('Loading from {}...'.format(model_save_fn), end='')
                 loaded_data = torch.load(data_file, map_location='cpu')
                 if self.cl_train.group_indexing:
                     self.cl_train.state = {
@@ -228,14 +228,17 @@ class TrainableOperation(Operation):
                     if not self.scheduler:
                         raise LrSchedulerNotLoaded
                     self.scheduler.load_state_dict(loaded_data['scheduler_state_dict'])
+            print('DONE')
 
     def save_checkpoint(self,
                         which: Checkpoints,
                         current_groups_offsets=None,
                         current_iterating_idx_offset: int = None):
         if which == Checkpoints.BEST:
+            print("Saving BEST checkpoint (will fail to load if interupted)...", end='')
             save_fn = os.path.expandvars(self.model_files_config.best_model)
         else:
+            print('Saving CURRENT checkpoint (will fail to load if interupted)...', end='')
             save_fn = os.path.expandvars(self.model_files_config.current_model)
         with open(save_fn, 'wb') as out_file:
             to_save = {
@@ -252,3 +255,4 @@ class TrainableOperation(Operation):
             if self.scheduler:
                 to_save['scheduler_state_dict'] = self.scheduler.state_dict()
             torch.save(to_save, out_file)
+        print('DONE')
