@@ -435,7 +435,6 @@ class PretrainConfig(BaseConfig):
 
         self.hd5_dataset = hd5_dataset
         self.max_sent_len = max_sent_len
-        self.algo = algo
         self.training_max = training_max
         self.model_files = model_files
         self.tpb = tpb
