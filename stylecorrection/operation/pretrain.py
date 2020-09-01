@@ -19,7 +19,8 @@ class PretrainOperation(TrainableOperation):
             device,
             model_conf=model_conf,
             optimizer_conf=optimizer_conf,
-            hd5_dataset_config=pretrain_conf.hd5_dataset
+            hd5_dataset_config=pretrain_conf.hd5_dataset,
+            model_files_config=pretrain_conf.model_files
         )
         self.pretrain_conf = pretrain_conf
         self.best_valid_loss = float('inf')
