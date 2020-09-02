@@ -33,9 +33,9 @@ class ManualEvaluationOperation(Operation):
             use_split_id=man_eval_conf.hd5_dataset.valid_split_id,
             forced_vocab=(vocab, vocab_special_chars)
         )[0]
-
+        criterion_placeholder = nn.CrossEntropyLoss(ignore_index=self.cl_train.pad_idx)
         pretrained_mdl_path = os.path.expandvars(man_eval_conf.pretrained_model)
-        self.load_model(len(vocab), pretrained_fn=pretrained_mdl_path)
+        self.load_model(len(vocab), criterion_placeholder, pretrained_fn=pretrained_mdl_path)
 
     def run(self):
         print('Starting manual evaluation...')
