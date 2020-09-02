@@ -80,10 +80,10 @@ class InferenceOperation(Operation):
         with open(self.source_input_fn, 'r') as in_f:
             with open(self.hyp_output_fn, 'w', buffering=self.buffering) as out_f:
                 for li, line in enumerate(in_f):
-                    if li < self.config['inference']['line_offset']:
+                    if li < self.inference_conf.line_offset:
                         continue
                     line = line.strip()
-                    if self.config['inference']['preprocess']:
+                    if self.inference_conf.preprocess:
                         line = self.spacy_bpe_pp(line)
                     print('IN  : {}'.format(line))
                     if 0 < self.inference_conf.max_len < len(line.split(' ')):
