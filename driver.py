@@ -91,11 +91,27 @@ elif config.global_conf.mode == OperationModes.PRETRAIN:
     operation.run()
 
 elif config.global_conf.mode == OperationModes.FINETUNE:
-    operation = FinetuneStreamingOperation(config, device)
+    operation = FinetuneStreamingOperation(
+        config.global_conf,
+        config.eval,
+        config.finetune,
+        config.optimizer,
+        config.transformer_s2s,
+        config.inference,
+        device,
+        config.gleu,
+        config.preprocess
+    )
     operation.run()
 
 elif config.global_conf.mode == OperationModes.INFERENCE:
-    operation = InferenceOperation(config, device)
+    operation = InferenceOperation(
+        config.global_conf,
+        config.inference,
+        config.transformer_s2s,
+        config.preprocess,
+        device
+    )
     operation.run()
 
 elif config.global_conf.mode == OperationModes.DEBUG:
