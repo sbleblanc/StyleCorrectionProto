@@ -14,7 +14,7 @@ class FinetuneStreamingOperation(TrainableOperation):
                                ds_conf: FinetuneDatasetConfig,
                                train_cl: StreamingH5CorpusLoader,
                                valid_cl: StreamingH5CorpusLoader,
-                               device: str):
+                               device: str,):
         if which == FinetuneDatasets.CA:
             if ds_conf.ca.shuffler == ShufflerType.CHUNK_SWAP:
                 shuffler = SentenceShuffler.chunk_shuffler(ds_conf.ca.min_chunk_ratio, ds_conf.ca.max_chunk_ratio)
@@ -47,16 +47,16 @@ class FinetuneStreamingOperation(TrainableOperation):
 
         elif which == FinetuneDatasets.PARALLEL:
             dnds_train = StreamingParallelDataset(train_cl,
-                                                  split_token=config['finetune']['dataset']['parallel']['split_token'],
-                                                  reverse=config['finetune']['dataset']['parallel']['reverse'],
-                                                  tokens_per_batch=config['finetune']['dataset']['tpb'],
-                                                  max_trainable_tokens=config['finetune']['dataset']['tpb'],
+                                                  split_token=ds_conf.parallel.split_token,
+                                                  reverse=ds_conf.parallel.reverse,
+                                                  tokens_per_batch=ds_conf.tpb,
+                                                  max_trainable_tokens=ds_conf.tpb,
                                                   device=device)
             dnds_valid = StreamingParallelDataset(valid_cl,
-                                                  split_token=config['finetune']['dataset']['parallel']['split_token'],
-                                                  reverse=config['finetune']['dataset']['parallel']['reverse'],
-                                                  tokens_per_batch=config['finetune']['dataset']['tpb'],
-                                                  max_trainable_tokens=config['finetune']['dataset']['tpb'],
+                                                  split_token=ds_conf.parallel.split_token,
+                                                  reverse=ds_conf.parallel.reverse,
+                                                  tokens_per_batch=ds_conf.tpb,
+                                                  max_trainable_tokens=ds_conf.tpb,
                                                   device=device)
 
         return dnds_train, dnds_valid
