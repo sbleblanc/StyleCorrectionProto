@@ -202,7 +202,7 @@ class FinetuneStreamingOperation(TrainableOperation):
                       t_output_key_mask,
                       t_offsets) in enumerate(self.dnds_train):
                 if self.finetune_conf.training_max.use == TrainingMax.STEPS and\
-                        self.current_training_step + 1 >= self.finetune_conf.training_max.amount:
+                        self.current_training_step >= self.finetune_conf.training_max.amount:
                     max_reached = True
                     print('Max steps reached.')
                 if tbi % self.eval_conf.interval == 0 or max_reached:
