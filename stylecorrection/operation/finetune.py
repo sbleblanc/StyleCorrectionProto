@@ -192,6 +192,8 @@ class FinetuneStreamingOperation(TrainableOperation):
         train_losses = []
         max_reached = False
         for i in range(self.finetune_conf.training_max.amount):
+            if max_reached:
+                break
             self._model.train()
             if self.cl_train.group_indexing:
                 current_groups_offsets = self.cl_train.group_offsets.clone()
