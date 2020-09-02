@@ -94,6 +94,7 @@ pretrain: !pretrain
   # Max length of a sentence to process (0 to consider all)
   max_sent_len: 0
   # Pretraing algorithm to use : 'mass' or 'bart'
+  # For BART, only the 'text infilling' method has been implemented and has not been debugged extensively
   algo: mass
   # Configure the number of training iterations
   training_max: !training_max

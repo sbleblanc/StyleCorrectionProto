@@ -3,12 +3,12 @@
 This is code for the experimentations on style correction for english text. This code implements : 
 -  Corpus conversion to hd5 files for better memory efficiency
 - Transformer sequence to sequence model
-- [MASS](https://arxiv.org/abs/1905.02450) and [BART](https://arxiv.org/abs/1910.13461) pretraining
+- [MASS](https://arxiv.org/abs/1905.02450) and (partial)[BART](https://arxiv.org/abs/1910.13461) pretraining
 - [Beam decoding noise](https://www.aclweb.org/anthology/N18-1057.pdf) during inference
 
 This projet is not intended to be used as a general solution for this problem but it should be easily adaptable to be more flexible. The pretraining corpus is intended to be tokenized using SpaCy and BPE should be applied using fastBPE. 
 
-With this project, you will be able to pretrain a Transformer sequence to sequence model using either the MASS or BART technique. This pretrained model will then be able to be finetuned using either a parallel dataset or a clean dataset with dynamic error generation using configurable random noise. Inference can then be done on the final model. If an error generating model has been trained (i.e. dirty to clean), noising can be applied to the beam decoding scores during inference to have a more diverse set of errors.
+With this project, you will be able to pretrain a Transformer sequence to sequence model using either the MASS or (partial)BART technique. It is mostly intended to use with MASS as only the *Text Infilling* method has been implemented for BART and the implementation has not been extensively debugged. This pretrained model will then be able to be finetuned using either a parallel dataset or a clean dataset with dynamic error generation using configurable random noise. Inference can then be done on the final model. If an error generating model has been trained (i.e. dirty to clean), noising can be applied to the beam decoding scores during inference to have a more diverse set of errors.
 
 ## Requirements
 - `Python >= 3.8`
@@ -89,6 +89,7 @@ Mode used to pretrain a model. A hd5 dataset with at least one split generated a
 - finetune
 - (optional) gleu
 - (optional) preprocess
+- (optional) inference
 
 <ins>Files Required</ins> :
 - Pretrained model (best or current checkpoint)
@@ -96,7 +97,7 @@ Mode used to pretrain a model. A hd5 dataset with at least one split generated a
 - Vocabulary hd5 file used for pretraining
 - (optional) source and references text files for GLEU evaluation
 
-Mode used to finetune a pretrained model. The transformer model configurations should be the same as during the pretraining. The finetuning corpus should be preprocessed the same way as the pretraining corpus. If GLEU is used to dertermine the best model, the **gleu** section in the configurations should be set. If the *preprocess* option is set for gleu, the **preprocess** section in the configuration must be set. The preprecessing involves tokenizing with SpaCy, applying BPE (using the codes computed with fastBPE for the pretraining) and putting everything in lowercase. The GLEU evaluation was intended to be used with the *dev* set of the [JFLEG evaluation corpus](https://github.com/keisks/jfleg). Before the checkpoints are saved, a random sentence is processed from the validation set and the result is shown on screen with the loss metrics.
+Mode used to finetune a pretrained model. The transformer model configurations should be the same as during the pretraining. The finetuning corpus should be preprocessed the same way as the pretraining corpus. If GLEU is used to dertermine the best model, the **gleu** and **inference** section in the configurations should be set. The inference section is only required for : *beam_width*, *max_len_scale*, *noising_beta* and *temperature*. If the *preprocess* option is set for gleu, the **preprocess** section in the configuration must be set. The preprecessing involves tokenizing with SpaCy, applying BPE (using the codes computed with fastBPE for the pretraining) and putting everything in lowercase. The GLEU evaluation was intended to be used with the *dev* set of the [JFLEG evaluation corpus](https://github.com/keisks/jfleg). Before the checkpoints are saved, a random sentence is processed from the validation set and the result is shown on screen with the loss metrics.
 
 If the **parallel** dataset is used, the raw finetuning dataset must be formated correctly before converting to the required hd5 format. Parallel sentences must be combined on the same line with a splitting token in the middle (e.g. helo <split> hello). This token must be specified in the hd5_gen configuration and in the *dataset* section of the finetune configurations. It must also be tokenized and preprocessed like the pretraining dataset.
 
