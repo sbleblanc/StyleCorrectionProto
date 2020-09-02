@@ -57,7 +57,8 @@ class InferenceOperation(Operation):
 
         self.load_dataset(inference_conf.max_len)
         pretrained_mdl_path = os.path.expandvars(inference_conf.pretrained_model)
-        self.load_model(len(self.vocab), pretrained_fn=pretrained_mdl_path)
+        criterion_placeholder = nn.CrossEntropyLoss(ignore_index=self.cl_train.pad_idx)
+        self.load_model(len(self.vocab), criterion_placeholder, pretrained_fn=pretrained_mdl_path)
 
         self.source_input_fn = os.path.expandvars(inference_conf.source_fn)
         self.hyp_output_fn = os.path.expandvars(inference_conf.hyp_fn)
