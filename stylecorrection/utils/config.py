@@ -184,10 +184,12 @@ class PreprocessConfig(BaseConfig):
 
     def __init__(self,
                  bpe_codes_fn: str,
-                 bpe_vocab_fn: str):
+                 bpe_vocab_fn: str,
+                 output_lower: bool):
         super(PreprocessConfig, self).__init__(locals())
         self.bpe_codes_fn = bpe_codes_fn
         self.bpe_vocab_fn = bpe_vocab_fn
+        self.output_lower = output_lower
 
 
 class ModelFilenameConfig(BaseConfig):
